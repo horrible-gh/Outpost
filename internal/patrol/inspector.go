@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 type diskEntry struct {
-	DeviceID  string  `json:"DeviceID"`
-	Size      float64 `json:"Size"`
-	FreeSpace float64 `json:"FreeSpace"`
+	DeviceID    string  `json:"DeviceID"`
+	Size        float64 `json:"Size"`
+	FreeSpace   float64 `json:"FreeSpace"`
+	UsedPercent float64 `json:"-"`
 }
 
 type networkEntry struct {
@@ -31,10 +33,10 @@ type processEntry struct {
 }
 
 type defenderStatusEntry struct {
-	AntivirusEnabled           bool `json:"AntivirusEnabled"`
-	AntispywareEnabled         bool `json:"AntispywareEnabled"`
-	RealTimeProtectionEnabled  bool `json:"RealTimeProtectionEnabled"`
-	BehaviorMonitorEnabled     bool `json:"BehaviorMonitorEnabled"`
+	AntivirusEnabled          bool `json:"AntivirusEnabled"`
+	AntispywareEnabled        bool `json:"AntispywareEnabled"`
+	RealTimeProtectionEnabled bool `json:"RealTimeProtectionEnabled"`
+	BehaviorMonitorEnabled    bool `json:"BehaviorMonitorEnabled"`
 }
 
 type firewallProfileEntry struct {
@@ -50,8 +52,9 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 
 	if check, ok := checkByKey(current, "disk"); ok && check.Status == StatusNormal {
 		for _, d := range decodeDisks(check.Raw) {
-			if d.Size <= 0 { continue }
-			used := (1 - d.FreeSpace/d.Size) * 100
+			used := d.UsedPercent
+			if used <= 0 && d.Size > 0 { used = (1 - d.FreeSpace/d.Size) * 100 }
+			if used <= 0 { continue }
 			if used >= 95 {
 				status = StatusDanger
 				changes = append(changes, fmt.Sprintf("Disk %s is %.1f%% used.", d.DeviceID, used))
@@ -63,7 +66,7 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 	}
 
 	if check, ok := checkByKey(current, "failed_logins"); ok && check.Status == StatusNormal {
-		watch.FailedLogins = jsonItemCount(check.Raw)
+		watch.FailedLogins = eventCount(check.Raw)
 		if watch.FailedLogins > 0 {
 			status = atLeastWarning(status)
 			changes = append(changes, fmt.Sprintf("%d failed login event(s) are present in the patrol window.", watch.FailedLogins))
@@ -181,7 +184,16 @@ func decodeDisks(raw string) []diskEntry {
 	if json.Unmarshal([]byte(raw), &many) == nil { return many }
 	var one diskEntry
 	if json.Unmarshal([]byte(raw), &one) == nil { return []diskEntry{one} }
-	return nil
+	var out []diskEntry
+	for i, line := range strings.Split(raw, "\n") {
+		if i == 0 || strings.TrimSpace(line) == "" { continue }
+		fields := strings.Fields(line)
+		if len(fields) < 6 { continue }
+		pct, err := strconv.ParseFloat(strings.TrimSuffix(fields[4], "%"), 64)
+		if err != nil { continue }
+		out = append(out, diskEntry{DeviceID: fields[0] + " (" + fields[5] + ")", UsedPercent: pct})
+	}
+	return out
 }
 
 func decodeNetwork(raw string) []networkEntry {
@@ -189,7 +201,42 @@ func decodeNetwork(raw string) []networkEntry {
 	if json.Unmarshal([]byte(raw), &many) == nil { return many }
 	var one networkEntry
 	if json.Unmarshal([]byte(raw), &one) == nil { return []networkEntry{one} }
-	return nil
+	return decodeSS(raw)
+}
+
+func decodeSS(raw string) []networkEntry {
+	var out []networkEntry
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || strings.EqualFold(fields[0], "Netid") { continue }
+		stateIndex := 1
+		if strings.EqualFold(fields[0], "LISTEN") || strings.EqualFold(fields[0], "ESTAB") { stateIndex = 0 }
+		if len(fields) <= stateIndex+4 { continue }
+		stateText := strings.ToUpper(fields[stateIndex])
+		state := 0
+		switch stateText { case "LISTEN": state = 2; case "ESTAB", "ESTABLISHED": state = 5; default: continue }
+		localIndex := stateIndex + 3
+		remoteIndex := stateIndex + 4
+		localAddr, localPort := splitEndpoint(fields[localIndex])
+		remoteAddr, remotePort := splitEndpoint(fields[remoteIndex])
+		out = append(out, networkEntry{State: state, LocalAddress: localAddr, LocalPort: localPort, RemoteAddress: remoteAddr, RemotePort: remotePort})
+	}
+	return out
+}
+
+func splitEndpoint(value string) (string, int) {
+	value = strings.TrimSpace(value)
+	if value == "" { return "", 0 }
+	if host, port, err := net.SplitHostPort(value); err == nil {
+		p, _ := strconv.Atoi(port); return strings.Trim(host, "[]"), p
+	}
+	idx := strings.LastIndex(value, ":")
+	if idx < 0 { return strings.Trim(value, "[]"), 0 }
+	host := strings.Trim(value[:idx], "[]")
+	portText := value[idx+1:]
+	if portText == "*" { return host, 0 }
+	p, _ := strconv.Atoi(portText)
+	return host, p
 }
 
 func listeners(raw string) map[string]struct{} {
@@ -197,7 +244,7 @@ func listeners(raw string) map[string]struct{} {
 	for _, n := range decodeNetwork(raw) {
 		if n.State != 2 || n.LocalPort <= 0 || n.LocalAddress == "127.0.0.1" || n.LocalAddress == "::1" { continue }
 		addr := n.LocalAddress
-		if addr == "0.0.0.0" || addr == "::" || addr == "" { addr = "*" }
+		if addr == "0.0.0.0" || addr == "::" || addr == "*" || addr == "" { addr = "*" }
 		out[fmt.Sprintf("%s:%d", addr, n.LocalPort)] = struct{}{}
 	}
 	return out
@@ -216,17 +263,29 @@ func unusualPublicConnections(raw string) []string {
 
 func suspiciousProcessPaths(raw string) []string {
 	var many []processEntry
-	if json.Unmarshal([]byte(raw), &many) != nil {
-		var one processEntry
-		if json.Unmarshal([]byte(raw), &one) != nil { return nil }
-		many = []processEntry{one}
+	if json.Unmarshal([]byte(raw), &many) == nil {
+		var out []string
+		for _, p := range many {
+			path := strings.ToLower(strings.ReplaceAll(p.ExecutablePath, "/", "\\"))
+			if path == "" { continue }
+			if strings.Contains(path, "\\temp\\") || strings.Contains(path, "\\downloads\\") || strings.HasPrefix(path, "c:\\windows\\temp\\") {
+				out = append(out, fmt.Sprintf("%s (%s)", p.Name, p.ExecutablePath))
+			}
+		}
+		return uniqueSorted(out)
+	}
+	var one processEntry
+	if json.Unmarshal([]byte(raw), &one) == nil && one.Name != "" {
+		path := strings.ToLower(strings.ReplaceAll(one.ExecutablePath, "/", "\\"))
+		if strings.Contains(path, "\\temp\\") || strings.Contains(path, "\\downloads\\") { return []string{fmt.Sprintf("%s (%s)", one.Name, one.ExecutablePath)} }
+		return nil
 	}
 	var out []string
-	for _, p := range many {
-		path := strings.ToLower(strings.ReplaceAll(p.ExecutablePath, "/", "\\"))
-		if path == "" { continue }
-		if strings.Contains(path, "\\temp\\") || strings.Contains(path, "\\downloads\\") || strings.HasPrefix(path, "c:\\windows\\temp\\") {
-			out = append(out, fmt.Sprintf("%s (%s)", p.Name, p.ExecutablePath))
+	for i, line := range strings.Split(raw, "\n") {
+		if i == 0 { continue }
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "/tmp/") || strings.Contains(lower, "/var/tmp/") || strings.Contains(lower, "/dev/shm/") {
+			out = append(out, strings.TrimSpace(line))
 		}
 	}
 	return uniqueSorted(out)
@@ -257,19 +316,40 @@ func disabledFirewallProfiles(raw string) []string {
 
 func addedNamedObjects(currentRaw, previousRaw, field string) []string {
 	decode := func(raw string) map[string]struct{} {
-		var many []map[string]any
-		if json.Unmarshal([]byte(raw), &many) != nil {
-			var one map[string]any
-			if json.Unmarshal([]byte(raw), &one) == nil { many = []map[string]any{one} }
-		}
 		set := map[string]struct{}{}
-		for _, item := range many { if v, ok := item[field].(string); ok && v != "" { set[v] = struct{}{} } }
+		var many []map[string]any
+		if json.Unmarshal([]byte(raw), &many) == nil {
+			for _, item := range many { if v, ok := item[field].(string); ok && v != "" { set[v] = struct{}{} } }
+			return set
+		}
+		var one map[string]any
+		if json.Unmarshal([]byte(raw), &one) == nil {
+			if v, ok := one[field].(string); ok && v != "" { set[v] = struct{}{} }
+			return set
+		}
+		for _, line := range strings.Split(raw, "\n") {
+			line = strings.TrimSpace(line); if line == "" { continue }
+			name := ""
+			if idx := strings.Index(line, ":"); idx > 0 { name = line[:idx] } else if fields := strings.Fields(line); len(fields) > 0 { name = fields[0] }
+			if name != "" { set[name] = struct{}{} }
+		}
 		return set
 	}
 	cur, old := decode(currentRaw), decode(previousRaw)
 	var added []string
 	for name := range cur { if _, exists := old[name]; !exists { added = append(added, name) } }
 	sort.Strings(added); return added
+}
+
+func eventCount(raw string) int {
+	if n := jsonItemCount(raw); n > 0 || strings.TrimSpace(raw) == "[]" { return n }
+	count := 0
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(strings.ToLower(line), "begins") { continue }
+		count++
+	}
+	return count
 }
 
 func jsonItemCount(raw string) int {
