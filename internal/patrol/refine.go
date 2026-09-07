@@ -14,7 +14,14 @@ import (
 // should not complicate the baseline collector. Failures leave the original
 // evidence untouched.
 func RefineSnapshot(ctx context.Context, snapshot *Snapshot) {
-	if snapshot == nil || snapshot.OS != "windows" {
+	if snapshot == nil {
+		return
+	}
+	// Outpost must never flag its own process as suspicious. This is especially
+	// important for `go run`, which executes Outpost from a temporary go-build
+	// directory that intentionally matches our suspicious-path heuristics.
+	excludeSelfProcess(snapshot)
+	if snapshot.OS != "windows" {
 		return
 	}
 	refineWindowsSystemHealth(ctx, snapshot)
