@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,6 +13,12 @@ import (
 )
 
 func main() {
+	listen := flag.String("listen", "127.0.0.1:8787", "web console listen address")
+	interval := flag.Duration("interval", time.Hour, "patrol interval")
+	journal := flag.String("journal", "outpost-journal.jsonl", "journal JSONL path")
+	timeout := flag.Duration("timeout", 30*time.Second, "maximum patrol duration")
+	flag.Parse()
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -19,14 +26,25 @@ func main() {
 	defer stop()
 
 	runner := patrol.NewRunner(patrol.RunnerConfig{
-		Interval:  time.Hour,
-		Timeout:   30 * time.Second,
-		Journal:   "outpost-journal.jsonl",
+		Interval:  *interval,
+		Timeout:   *timeout,
+		Journal:   *journal,
 		RunOnBoot: true,
 	})
+	web := patrol.NewWebServer(*listen, runner)
 
-	if err := runner.Run(ctx); err != nil {
-		slog.Error("outpost stopped with error", "error", err)
-		os.Exit(1)
+	errCh := make(chan error, 2)
+	go func() { errCh <- runner.Run(ctx) }()
+	go func() { errCh <- web.Run(ctx) }()
+
+	slog.Info("outpost started", "listen", *listen, "interval", interval.String(), "journal", *journal)
+	select {
+	case <-ctx.Done():
+	case err := <-errCh:
+		if err != nil {
+			slog.Error("outpost stopped with error", "error", err)
+			stop()
+			os.Exit(1)
+		}
 	}
 }
