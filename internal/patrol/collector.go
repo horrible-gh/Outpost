@@ -1,8 +1,9 @@
 package patrol
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,86 +12,76 @@ import (
 	"time"
 )
 
-type Collector interface {
-	Collect(context.Context) Snapshot
+type commandCheck struct {
+	Key     string
+	Name    string
+	Command string
+	Args    []string
 }
 
-type LocalCollector struct{}
-
-func NewLocalCollector() *LocalCollector { return &LocalCollector{} }
-
-func (c *LocalCollector) Collect(ctx context.Context) Snapshot {
-	host, _ := os.Hostname()
-	s := Snapshot{
-		Target:    host,
-		Collected: time.Now(),
-		Values: map[string]string{
-			"os":   runtime.GOOS,
-			"arch": runtime.GOARCH,
-		},
-		Evidence: map[string]string{},
+func CollectLocal(ctx context.Context) Snapshot {
+	hostname, _ := os.Hostname()
+	snapshot := Snapshot{
+		Target:    hostname,
+		OS:        runtime.GOOS,
+		StartedAt: time.Now(),
 	}
 
-	if runtime.GOOS == "windows" {
-		c.collectWindows(ctx, &s)
-	} else {
-		c.collectUnix(ctx, &s)
+	checks := checksForOS(runtime.GOOS)
+	for _, check := range checks {
+		snapshot.Checks = append(snapshot.Checks, runCheck(ctx, check))
 	}
-	return s
+	snapshot.FinishedAt = time.Now()
+	return snapshot
 }
 
-func (c *LocalCollector) collectUnix(ctx context.Context, s *Snapshot) {
-	run := func(name string, args ...string) string { return runCommand(ctx, name, args...) }
-	s.Evidence["disk"] = run("df", "-P")
-	s.Evidence["processes"] = run("ps", "-eo", "pid,ppid,user,%cpu,%mem,comm", "--sort=-%cpu")
-	s.Evidence["network"] = firstNonEmpty(run("ss", "-tunap"), run("netstat", "-tunap"))
-	s.Evidence["logins"] = run("last", "-ai")
-	s.Evidence["failed_logins"] = run("lastb", "-ai")
-
-	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
-		s.Evidence["memory"] = string(b)
-	}
-	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
-		s.Values["loadavg"] = strings.TrimSpace(string(b))
+func checksForOS(goos string) []commandCheck {
+	if goos == "windows" {
+		return []commandCheck{
+			{Key: "disk", Name: "Disk", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Json -Compress`}},
+			{Key: "processes", Name: "Processes", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress`}},
+			{Key: "network", Name: "Network", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `Get-NetTCPConnection -State Established,Listen -ErrorAction SilentlyContinue | Select-Object -First 100 State,LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess | ConvertTo-Json -Compress`}},
+			{Key: "login_history", Name: "Login history", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `$start=(Get-Date).AddHours(-24); Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=$start} -MaxEvents 30 -ErrorAction Stop | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress`}},
+			{Key: "failed_logins", Name: "Failed logins", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `$start=(Get-Date).AddHours(-24); Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=$start} -MaxEvents 30 -ErrorAction Stop | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress`}},
+			{Key: "security_updates", Name: "Security updates", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", `Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,Description,InstalledOn | ConvertTo-Json -Compress`}},
+		}
 	}
 
-	if _, err := exec.LookPath("apt"); err == nil {
-		s.Evidence["security_updates"] = run("sh", "-c", "apt list --upgradable 2>/dev/null | head -80")
-	} else if _, err := exec.LookPath("dnf"); err == nil {
-		s.Evidence["security_updates"] = run("dnf", "check-update", "--security")
+	return []commandCheck{
+		{Key: "disk", Name: "Disk", Command: "df", Args: []string{"-P", "-h"}},
+		{Key: "processes", Name: "Processes", Command: "sh", Args: []string{"-c", `ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 25`}},
+		{Key: "network", Name: "Network", Command: "sh", Args: []string{"-c", `ss -tunap 2>/dev/null || netstat -tunap 2>/dev/null`}},
+		{Key: "login_history", Name: "Login history", Command: "sh", Args: []string{"-c", `last -ai -n 30 2>/dev/null`}},
+		{Key: "failed_logins", Name: "Failed logins", Command: "sh", Args: []string{"-c", `lastb -ai -n 30 2>/dev/null`}},
+		{Key: "security_updates", Name: "Security updates", Command: "sh", Args: []string{"-c", `(command -v apt >/dev/null && apt list --upgradable 2>/dev/null | head -n 50) || (command -v dnf >/dev/null && dnf check-update --security 2>/dev/null | head -n 50) || true`}},
 	}
 }
 
-func (c *LocalCollector) collectWindows(ctx context.Context, s *Snapshot) {
-	ps := func(script string) string {
-		return runCommand(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-	}
-	s.Evidence["memory"] = ps("Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | Format-List")
-	s.Evidence["disk"] = ps("Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select DeviceID,Size,FreeSpace | Format-Table -AutoSize")
-	s.Evidence["processes"] = ps("Get-Process | Sort-Object CPU -Descending | Select-Object -First 30 Id,ProcessName,CPU,WorkingSet64 | Format-Table -AutoSize")
-	s.Evidence["network"] = ps("Get-NetTCPConnection | Select-Object -First 100 State,LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess | Format-Table -AutoSize")
-	s.Evidence["logins"] = ps("Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624} -MaxEvents 30 -ErrorAction SilentlyContinue | Select TimeCreated,Id,Message | Format-List")
-	s.Evidence["failed_logins"] = ps("Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4625} -MaxEvents 30 -ErrorAction SilentlyContinue | Select TimeCreated,Id,Message | Format-List")
-	s.Evidence["security_updates"] = ps("Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,InstalledOn,Description | Format-Table -AutoSize")
-}
+func runCheck(ctx context.Context, check commandCheck) CheckResult {
+	cmd := exec.CommandContext(ctx, check.Command, check.Args...)
+	output, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(output))
 
-func runCommand(ctx context.Context, name string, args ...string) string {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var out, stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" { msg = err.Error() }
-		return fmt.Sprintf("unavailable: %s", msg)
+	result := CheckResult{
+		Key:     check.Key,
+		Name:    check.Name,
+		Status:  StatusNormal,
+		Summary: "collected",
+		Raw:     text,
 	}
-	return strings.TrimSpace(out.String())
-}
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" && !strings.HasPrefix(v, "unavailable:") { return v }
+	if err != nil {
+		result.Status = StatusUnknown
+		result.Summary = "check unavailable"
+		if text == "" {
+			text = err.Error()
+		} else {
+			text = fmt.Sprintf("%s\n%s", text, err)
+		}
+		result.Raw = text
 	}
-	if len(values) > 0 { return values[0] }
-	return ""
+
+	hash := sha256.Sum256([]byte(result.Raw))
+	result.Fingerprint = hex.EncodeToString(hash[:])
+	return result
 }
