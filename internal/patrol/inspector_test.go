@@ -24,7 +24,7 @@ func TestAnalyzeWarnsOnNewListener(t *testing.T) {
 	current := Snapshot{Checks: []CheckResult{{Key: "network", Status: StatusNormal, Raw: `[{"State":2,"LocalAddress":"0.0.0.0","LocalPort":80},{"State":2,"LocalAddress":"0.0.0.0","LocalPort":9000}]`}}}
 	got := Analyze(current, &previous)
 	if got.Status != StatusWarning { t.Fatalf("expected warning, got %s", got.Status) }
-	if got.Watch.NewListeners != 1 || got.RiskScore != 10 { t.Fatalf("unexpected result: %#v", got.Assessment) }
+	if got.Watch.NewListeners != 1 || got.RiskScore != 10 { t.Fatalf("unexpected result: watch=%#v risk=%d", got.Watch, got.RiskScore) }
 }
 
 func TestAnalyzeWarnsOnFailedLoginEvents(t *testing.T) {
