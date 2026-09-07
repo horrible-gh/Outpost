@@ -53,6 +53,7 @@ func (s *WebServer) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/patrols", s.handlePatrols)
+	mux.HandleFunc("GET /api/review-packet", s.handleReviewPacket)
 	mux.HandleFunc("POST /api/patrols/run", s.handleRun)
 	return mux
 }
@@ -82,6 +83,12 @@ func (s *WebServer) handlePatrols(w http.ResponseWriter, r *http.Request) {
 	history, err := s.runner.Recent(limit)
 	if err != nil { writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()}); return }
 	writeJSON(w, http.StatusOK, map[string]any{"patrols": history, "count": len(history)})
+}
+
+func (s *WebServer) handleReviewPacket(w http.ResponseWriter, r *http.Request) {
+	latest := s.runner.Latest()
+	if latest == nil { writeJSON(w, http.StatusNotFound, map[string]string{"error": "no patrol has completed yet"}); return }
+	writeJSON(w, http.StatusOK, BuildReviewPacket(*latest))
 }
 
 func (s *WebServer) handleRun(w http.ResponseWriter, r *http.Request) {
