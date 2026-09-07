@@ -28,6 +28,12 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 	changes = append(changes, healthChanges...)
 	next = append(next, healthNext...)
 
+	heavyCount, pressureStatus, pressureChanges, pressureNext := inspectProcessPressure(current)
+	assessment.Watch.ResourceHeavyProcesses = heavyCount
+	assessment.Status = mergeStatus(assessment.Status, pressureStatus)
+	changes = append(changes, pressureChanges...)
+	next = append(next, pressureNext...)
+
 	if previous == nil {
 		changes = append(changes, "Baseline established from the first patrol.")
 		next = append(next, "Compare the next patrol with this baseline.")
