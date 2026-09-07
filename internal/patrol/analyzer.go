@@ -1,76 +1,59 @@
 package patrol
 
-import (
-	"fmt"
-	"sort"
-)
+import "fmt"
 
 func Analyze(current Snapshot, previous *Snapshot) Assessment {
 	assessment := Assessment{
 		Status:  StatusNormal,
-		Summary: "No confirmed compromise detected by the baseline checks.",
+		Summary: "No confirmed compromise detected by the current patrol checks.",
 	}
 
 	unknownCount := 0
-	warningCount := 0
-	dangerCount := 0
-
 	for _, check := range current.Checks {
 		switch check.Status {
 		case StatusDanger:
-			dangerCount++
+			assessment.Status = StatusDanger
 		case StatusWarning:
-			warningCount++
+			if assessment.Status != StatusDanger {
+				assessment.Status = StatusWarning
+			}
 		case StatusUnknown:
 			unknownCount++
 		}
 	}
-
-	switch {
-	case dangerCount > 0:
-		assessment.Status = StatusDanger
-	case warningCount > 0:
-		assessment.Status = StatusWarning
-	case len(current.Checks) > 0 && unknownCount == len(current.Checks):
+	if len(current.Checks) > 0 && unknownCount == len(current.Checks) {
 		assessment.Status = StatusUnknown
-	default:
-		assessment.Status = StatusNormal
+	}
+
+	semanticStatus, changes, next := inspectMeaningfulChanges(current, previous)
+	if semanticStatus == StatusDanger || (semanticStatus == StatusWarning && assessment.Status == StatusNormal) {
+		assessment.Status = semanticStatus
 	}
 
 	if previous == nil {
-		assessment.Changes = []string{"Baseline established from the first patrol."}
-		assessment.Next = []string{"Compare the next patrol with this baseline."}
-		if unknownCount > 0 {
-			assessment.Next = append(assessment.Next, fmt.Sprintf("Retry %d unavailable check(s) on the next patrol.", unknownCount))
-		}
-		return assessment
+		changes = append(changes, "Baseline established from the first patrol.")
+		next = append(next, "Compare the next patrol with this baseline.")
 	}
-
-	prev := make(map[string]CheckResult, len(previous.Checks))
-	for _, check := range previous.Checks {
-		prev[check.Key] = check
-	}
-
-	var changed []string
-	for _, check := range current.Checks {
-		old, ok := prev[check.Key]
-		if !ok || old.Fingerprint != check.Fingerprint || old.Status != check.Status {
-			changed = append(changed, check.Name)
-		}
-	}
-	sort.Strings(changed)
-
-	if len(changed) == 0 {
-		assessment.Changes = []string{"No evidence category changed since the previous patrol."}
-		assessment.Next = []string{"Continue scheduled patrols."}
-	} else {
-		assessment.Changes = []string{fmt.Sprintf("Observed changes in %d evidence categories since the previous patrol.", len(changed))}
-		assessment.Next = []string{"Re-check changed categories on the next patrol."}
-	}
-
 	if unknownCount > 0 {
-		assessment.Next = append(assessment.Next, fmt.Sprintf("Retry %d unavailable check(s).", unknownCount))
+		next = append(next, fmt.Sprintf("Retry %d unavailable check(s) on the next patrol.", unknownCount))
+	}
+	if len(changes) == 0 {
+		changes = []string{"No meaningful security or health change detected since the previous patrol."}
+	}
+	if len(next) == 0 {
+		next = []string{"Continue scheduled patrols."}
 	}
 
+	assessment.Changes = uniqueSorted(changes)
+	assessment.Next = uniqueSorted(next)
+
+	switch assessment.Status {
+	case StatusDanger:
+		assessment.Summary = "High-risk evidence was detected. Review the findings before taking any action."
+	case StatusWarning:
+		assessment.Summary = "The patrol found exposure or a meaningful change that should be reviewed. No compromise is confirmed."
+	case StatusUnknown:
+		assessment.Summary = "The patrol could not collect enough evidence to make a reliable assessment."
+	}
 	return assessment
 }
