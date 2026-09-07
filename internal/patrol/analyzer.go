@@ -1,68 +1,76 @@
 package patrol
 
-import "strings"
+import (
+	"fmt"
+	"sort"
+)
 
-type Analyzer interface {
-	Analyze(current Snapshot, previous *Snapshot) ([]Check, []string, []string, Severity)
-}
-
-type HeuristicAnalyzer struct{}
-
-func NewHeuristicAnalyzer() *HeuristicAnalyzer { return &HeuristicAnalyzer{} }
-
-func (a *HeuristicAnalyzer) Analyze(current Snapshot, previous *Snapshot) ([]Check, []string, []string, Severity) {
-	checks := []Check{}
-	status := SeverityNormal
-
-	add := func(key, label, summary, detail string, severity Severity) {
-		checks = append(checks, Check{Key: key, Label: label, Summary: summary, Detail: detail, Severity: severity})
-		if severityRank(severity) > severityRank(status) { status = severity }
+func Analyze(current Snapshot, previous *Snapshot) Assessment {
+	assessment := Assessment{
+		Status:  StatusNormal,
+		Summary: "No confirmed compromise detected by the baseline checks.",
 	}
 
-	for _, item := range []struct{ key, label string }{
-		{"disk", "Disk"}, {"processes", "Processes"}, {"network", "Network"},
-		{"logins", "Login history"}, {"failed_logins", "Failed logins"}, {"security_updates", "Security updates"},
-	} {
-		v := strings.TrimSpace(current.Evidence[item.key])
-		if v == "" || strings.HasPrefix(v, "unavailable:") {
-			add(item.key, item.label, "check unavailable", trim(v, 240), SeverityUnknown)
-		} else {
-			add(item.key, item.label, "collected", "", SeverityNormal)
+	unknownCount := 0
+	warningCount := 0
+	dangerCount := 0
+
+	for _, check := range current.Checks {
+		switch check.Status {
+		case StatusDanger:
+			dangerCount++
+		case StatusWarning:
+			warningCount++
+		case StatusUnknown:
+			unknownCount++
 		}
 	}
 
-	assessment := []string{"No confirmed compromise detected by the baseline checks."}
-	next := []string{"Compare the next patrol with this baseline."}
-	if previous != nil {
-		changed := 0
-		for k, v := range current.Evidence {
-			if previous.Evidence[k] != "" && previous.Evidence[k] != v { changed++ }
+	switch {
+	case dangerCount > 0:
+		assessment.Status = StatusDanger
+	case warningCount > 0:
+		assessment.Status = StatusWarning
+	case len(current.Checks) > 0 && unknownCount == len(current.Checks):
+		assessment.Status = StatusUnknown
+	default:
+		assessment.Status = StatusNormal
+	}
+
+	if previous == nil {
+		assessment.Changes = []string{"Baseline established from the first patrol."}
+		assessment.Next = []string{"Compare the next patrol with this baseline."}
+		if unknownCount > 0 {
+			assessment.Next = append(assessment.Next, fmt.Sprintf("Retry %d unavailable check(s) on the next patrol.", unknownCount))
 		}
-		if changed > 0 {
-			assessment = append(assessment, "Observed changes in "+itoa(changed)+" evidence categories since the previous patrol.")
-			next = append(next, "Re-check changed categories on the next patrol.")
+		return assessment
+	}
+
+	prev := make(map[string]CheckResult, len(previous.Checks))
+	for _, check := range previous.Checks {
+		prev[check.Key] = check
+	}
+
+	var changed []string
+	for _, check := range current.Checks {
+		old, ok := prev[check.Key]
+		if !ok || old.Fingerprint != check.Fingerprint || old.Status != check.Status {
+			changed = append(changed, check.Name)
 		}
 	}
-	return checks, assessment, next, status
-}
+	sort.Strings(changed)
 
-func severityRank(s Severity) int {
-	switch s {
-	case SeverityDanger: return 3
-	case SeverityWarning: return 2
-	case SeverityUnknown: return 1
-	default: return 0
+	if len(changed) == 0 {
+		assessment.Changes = []string{"No evidence category changed since the previous patrol."}
+		assessment.Next = []string{"Continue scheduled patrols."}
+	} else {
+		assessment.Changes = []string{fmt.Sprintf("Observed changes in %d evidence categories since the previous patrol.", len(changed))}
+		assessment.Next = []string{"Re-check changed categories on the next patrol."}
 	}
-}
 
-func trim(s string, n int) string {
-	if len(s) <= n { return s }
-	return s[:n] + "..."
-}
+	if unknownCount > 0 {
+		assessment.Next = append(assessment.Next, fmt.Sprintf("Retry %d unavailable check(s).", unknownCount))
+	}
 
-func itoa(n int) string {
-	if n == 0 { return "0" }
-	b := make([]byte, 0, 12)
-	for n > 0 { b = append([]byte{byte('0' + n%10)}, b...); n /= 10 }
-	return string(b)
+	return assessment
 }
