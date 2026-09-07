@@ -21,12 +21,7 @@ type commandCheck struct {
 
 func CollectLocal(ctx context.Context) Snapshot {
 	hostname, _ := os.Hostname()
-	snapshot := Snapshot{
-		Target:    hostname,
-		OS:        runtime.GOOS,
-		StartedAt: time.Now(),
-	}
-
+	snapshot := Snapshot{Target: hostname, OS: runtime.GOOS, StartedAt: time.Now()}
 	for _, check := range checksForOS(runtime.GOOS) {
 		snapshot.Checks = append(snapshot.Checks, runCheck(ctx, check))
 	}
@@ -45,6 +40,9 @@ func checksForOS(goos string) []commandCheck {
 			{Key: "failed_logins", Name: "Failed logins", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `$start=(Get-Date).AddHours(-24); $e=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=$start} -MaxEvents 30 -ErrorAction SilentlyContinue); $e | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress; if($e.Count -eq 0){'[]'}`}},
 			{Key: "users", Name: "Local users", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-LocalUser | Select-Object Name,Enabled,SID,LastLogon | ConvertTo-Json -Compress`}},
 			{Key: "services", Name: "Auto-start services", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_Service | Where-Object {$_.StartMode -eq 'Auto'} | Select-Object Name,State,StartMode,StartName,PathName | ConvertTo-Json -Compress`}},
+			{Key: "defender_status", Name: "Defender status", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-MpComputerStatus -ErrorAction Stop | Select-Object AntivirusEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json -Compress`}},
+			{Key: "defender_threats", Name: "Recent Defender threats", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `$start=(Get-Date).AddHours(-24); $e=@(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {$_.InitialDetectionTime -ge $start} | Select-Object ThreatID,InitialDetectionTime,LastThreatStatusChangeTime,ActionSuccess,Resources); $e | ConvertTo-Json -Compress; if($e.Count -eq 0){'[]'}`}},
+			{Key: "firewall", Name: "Firewall profiles", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-NetFirewallProfile | Select-Object Name,Enabled,DefaultInboundAction,DefaultOutboundAction | ConvertTo-Json -Compress`}},
 			{Key: "security_updates", Name: "Security updates", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,Description,InstalledOn | ConvertTo-Json -Compress`}},
 		}
 	}
@@ -65,19 +63,13 @@ func runCheck(ctx context.Context, check commandCheck) CheckResult {
 	cmd := exec.CommandContext(ctx, check.Command, check.Args...)
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
-
 	result := CheckResult{Key: check.Key, Name: check.Name, Status: StatusNormal, Summary: "collected", Raw: text}
 	if err != nil {
 		result.Status = StatusUnknown
 		result.Summary = "check unavailable"
-		if text == "" {
-			text = err.Error()
-		} else {
-			text = fmt.Sprintf("%s\n%s", text, err)
-		}
+		if text == "" { text = err.Error() } else { text = fmt.Sprintf("%s\n%s", text, err) }
 		result.Raw = text
 	}
-
 	hash := sha256.Sum256([]byte(result.Raw))
 	result.Fingerprint = hex.EncodeToString(hash[:])
 	return result
