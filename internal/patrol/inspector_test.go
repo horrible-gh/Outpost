@@ -69,3 +69,35 @@ func TestAnalyzeWarnsOnDefenderThreat(t *testing.T) {
 	if got.Status != StatusWarning { t.Fatalf("expected warning, got %s", got.Status) }
 	if got.Watch.ThreatDetections != 1 || got.RiskScore != 30 { t.Fatalf("unexpected result: %#v risk=%d", got.Watch, got.RiskScore) }
 }
+
+func TestLinuxSSNewListenerIsDetected(t *testing.T) {
+	previous := Snapshot{Checks: []CheckResult{{Key: "network", Status: StatusNormal, Raw: "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*"}}}
+	current := Snapshot{Checks: []CheckResult{{Key: "network", Status: StatusNormal, Raw: "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\ntcp LISTEN 0 128 0.0.0.0:9000 0.0.0.0:*"}}}
+	got := Analyze(current, &previous)
+	if got.Watch.NewListeners != 1 || got.Status != StatusWarning { t.Fatalf("expected Linux new listener warning, got %#v", got) }
+}
+
+func TestLinuxFailedLoginTextIsCounted(t *testing.T) {
+	current := Snapshot{Checks: []CheckResult{{Key: "failed_logins", Status: StatusNormal, Raw: "root ssh:notty 203.0.113.7 Mon Sep 8 01:00 - 01:00 (00:00)\nadmin ssh:notty 203.0.113.8 Mon Sep 8 01:01 - 01:01 (00:00)\nbtmp begins Mon Sep 8 00:00:00 2026"}}}
+	got := Analyze(current, nil)
+	if got.Watch.FailedLogins != 2 { t.Fatalf("expected two Linux failed logins, got %d", got.Watch.FailedLogins) }
+}
+
+func TestLinuxNewUserAndServiceTextIsDetected(t *testing.T) {
+	previous := Snapshot{Checks: []CheckResult{
+		{Key: "users", Status: StatusNormal, Raw: "root:x:0:0:root:/root:/bin/bash"},
+		{Key: "services", Status: StatusNormal, Raw: "ssh.service enabled"},
+	}}
+	current := Snapshot{Checks: []CheckResult{
+		{Key: "users", Status: StatusNormal, Raw: "root:x:0:0:root:/root:/bin/bash\nintruder:x:1002:1002::/home/intruder:/bin/bash"},
+		{Key: "services", Status: StatusNormal, Raw: "ssh.service enabled\nodd.service enabled"},
+	}}
+	got := Analyze(current, &previous)
+	if got.Watch.NewUsers != 1 || got.Watch.NewServices != 1 { t.Fatalf("unexpected Linux watch summary: %#v", got.Watch) }
+}
+
+func TestLinuxDiskThresholdIsParsed(t *testing.T) {
+	current := Snapshot{Checks: []CheckResult{{Key: "disk", Status: StatusNormal, Raw: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 100G 96G 4G 96% /"}}}
+	got := Analyze(current, nil)
+	if got.Status != StatusDanger { t.Fatalf("expected danger for 96%% Linux disk, got %s", got.Status) }
+}
