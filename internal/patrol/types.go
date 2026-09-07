@@ -40,6 +40,12 @@ type WatchSummary struct {
 	ProtectionIssues    int `json:"protection_issues"`
 }
 
+type HealthSummary struct {
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryPercent float64 `json:"memory_percent"`
+	SwapPercent   float64 `json:"swap_percent"`
+}
+
 type Finding struct {
 	Category string `json:"category"`
 	Severity Status `json:"severity"`
@@ -47,13 +53,14 @@ type Finding struct {
 }
 
 type Assessment struct {
-	Status    Status       `json:"status"`
-	RiskScore int          `json:"risk_score"`
-	Summary   string       `json:"summary"`
-	Changes   []string     `json:"changes"`
-	Next      []string     `json:"next"`
-	Watch     WatchSummary `json:"watch"`
-	Findings  []Finding    `json:"findings"`
+	Status    Status        `json:"status"`
+	RiskScore int           `json:"risk_score"`
+	Summary   string        `json:"summary"`
+	Changes   []string      `json:"changes"`
+	Next      []string      `json:"next"`
+	Watch     WatchSummary  `json:"watch"`
+	Health    HealthSummary `json:"health"`
+	Findings  []Finding     `json:"findings"`
 }
 
 type PatrolReport struct {
