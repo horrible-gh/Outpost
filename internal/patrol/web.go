@@ -1,6 +1,7 @@
 package patrol
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,10 +68,13 @@ func (s *WebServer) Handler() http.Handler {
 }
 
 func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.Execute(w, s.runner.Latest()); err != nil {
+	var buf bytes.Buffer
+	if err := s.tmpl.Execute(&buf, s.runner.Latest()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (s *WebServer) handleStatus(w http.ResponseWriter, r *http.Request) {
