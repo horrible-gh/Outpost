@@ -33,6 +33,7 @@ func checksForOS(goos string) []commandCheck {
 	if goos == "windows" {
 		prefix := `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); `
 		return []commandCheck{
+			{Key: "system_health", Name: "System health", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `$os=Get-CimInstance Win32_OperatingSystem; $cpu=[double]((Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average); $mem=[double](100*(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)); $pf=@(Get-CimInstance Win32_PageFileUsage); $swap=0.0; if($pf.Count -gt 0){$allocated=($pf|Measure-Object AllocatedBaseSize -Sum).Sum; $used=($pf|Measure-Object CurrentUsage -Sum).Sum; if($allocated -gt 0){$swap=[double](100*$used/$allocated)}}; [pscustomobject]@{CPUPercent=[math]::Round($cpu,1);MemoryPercent=[math]::Round($mem,1);SwapPercent=[math]::Round($swap,1)} | ConvertTo-Json -Compress`}},
 			{Key: "disk", Name: "Disk", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Json -Compress`}},
 			{Key: "processes", Name: "Processes", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ExecutablePath,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`}},
 			{Key: "network", Name: "Network", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-NetTCPConnection -State Established,Listen -ErrorAction SilentlyContinue | Select-Object State,LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess | ConvertTo-Json -Compress`}},
@@ -48,6 +49,7 @@ func checksForOS(goos string) []commandCheck {
 	}
 
 	return []commandCheck{
+		{Key: "system_health", Name: "System health", Command: "sh", Args: []string{"-c", `cpu=$(LC_ALL=C top -bn1 2>/dev/null | awk '/Cpu\(s\)|^%Cpu/{for(i=1;i<=NF;i++) if($i ~ /id/){gsub(/,/,"",$(i-1)); printf "%.1f",100-$(i-1); exit}}'); mem=$(free -b 2>/dev/null | awk '/^Mem:/{if($2>0) printf "%.1f",100*$3/$2}'); swap=$(free -b 2>/dev/null | awk '/^Swap:/{if($2>0) printf "%.1f",100*$3/$2; else printf "0.0"}'); [ -n "$cpu" ] || cpu=0; [ -n "$mem" ] || mem=0; [ -n "$swap" ] || swap=0; printf '{"CPUPercent":%s,"MemoryPercent":%s,"SwapPercent":%s}\n' "$cpu" "$mem" "$swap"`}},
 		{Key: "disk", Name: "Disk", Command: "df", Args: []string{"-P", "-h"}},
 		{Key: "processes", Name: "Processes", Command: "sh", Args: []string{"-c", `ps -eo pid,user,%cpu,%mem,comm,args --sort=-%cpu | head -n 80`}},
 		{Key: "network", Name: "Network", Command: "sh", Args: []string{"-c", `ss -tunap 2>/dev/null || netstat -tunap 2>/dev/null`}},
