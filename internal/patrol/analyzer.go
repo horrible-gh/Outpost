@@ -20,7 +20,13 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 
 	semanticStatus, changes, next, watch := inspectMeaningfulChanges(current, previous)
 	assessment.Watch = watch
-	if semanticStatus == StatusDanger || (semanticStatus == StatusWarning && assessment.Status == StatusNormal) { assessment.Status = semanticStatus }
+	assessment.Status = mergeStatus(assessment.Status, semanticStatus)
+
+	health, healthStatus, healthChanges, healthNext := inspectSystemHealth(current)
+	assessment.Health = health
+	assessment.Status = mergeStatus(assessment.Status, healthStatus)
+	changes = append(changes, healthChanges...)
+	next = append(next, healthNext...)
 
 	if previous == nil {
 		changes = append(changes, "Baseline established from the first patrol.")
@@ -36,11 +42,24 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 
 	switch assessment.Status {
 	case StatusDanger:
-		assessment.Summary = "High-risk evidence was detected. Review the findings before taking any action."
+		assessment.Summary = "High-risk evidence or critical resource pressure was detected. Review the findings before taking any action."
 	case StatusWarning:
-		assessment.Summary = "The patrol found exposure or a meaningful change that should be reviewed. No compromise is confirmed."
+		assessment.Summary = "The patrol found exposure, resource pressure, or a meaningful change that should be reviewed. No compromise is confirmed."
 	case StatusUnknown:
 		assessment.Summary = "The patrol could not collect enough evidence to make a reliable assessment."
 	}
 	return assessment
+}
+
+func mergeStatus(current, candidate Status) Status {
+	rank := func(s Status) int {
+		switch s {
+		case StatusDanger: return 3
+		case StatusWarning: return 2
+		case StatusUnknown: return 1
+		default: return 0
+		}
+	}
+	if rank(candidate) > rank(current) { return candidate }
+	return current
 }
