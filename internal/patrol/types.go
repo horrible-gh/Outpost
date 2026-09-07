@@ -30,14 +30,15 @@ type Snapshot struct {
 }
 
 type WatchSummary struct {
-	NewListeners        int `json:"new_listeners"`
-	FailedLogins        int `json:"failed_logins"`
-	NewUsers            int `json:"new_users"`
-	NewServices         int `json:"new_services"`
-	SuspiciousProcesses int `json:"suspicious_processes"`
-	UnusualConnections  int `json:"unusual_connections"`
-	ThreatDetections    int `json:"threat_detections"`
-	ProtectionIssues    int `json:"protection_issues"`
+	NewListeners          int `json:"new_listeners"`
+	FailedLogins          int `json:"failed_logins"`
+	NewUsers              int `json:"new_users"`
+	NewServices           int `json:"new_services"`
+	SuspiciousProcesses   int `json:"suspicious_processes"`
+	ResourceHeavyProcesses int `json:"resource_heavy_processes"`
+	UnusualConnections    int `json:"unusual_connections"`
+	ThreatDetections      int `json:"threat_detections"`
+	ProtectionIssues      int `json:"protection_issues"`
 }
 
 type HealthSummary struct {
