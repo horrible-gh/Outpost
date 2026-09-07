@@ -1,7 +1,9 @@
 package patrol
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -10,14 +12,48 @@ import (
 )
 
 type WebServer struct {
+	addr   string
 	runner *Runner
 	tmpl   *template.Template
 }
 
-func NewWebServer(runner *Runner) *WebServer {
+func NewWebServer(addr string, runner *Runner) *WebServer {
 	return &WebServer{
+		addr:   addr,
 		runner: runner,
 		tmpl:   template.Must(template.New("index").Funcs(template.FuncMap{"upper": strings.ToUpper}).Parse(indexHTML)),
+	}
+}
+
+func (s *WebServer) Run(ctx context.Context) error {
+	server := &http.Server{
+		Addr:              s.addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	}
 }
 
@@ -100,4 +136,4 @@ async function runPatrol(){
 </script>
 </body></html>`
 
-func (s *WebServer) String() string { return fmt.Sprintf("Outpost web server") }
+func (s *WebServer) String() string { return fmt.Sprintf("Outpost web server (%s)", s.addr) }
