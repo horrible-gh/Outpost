@@ -29,11 +29,21 @@ type Snapshot struct {
 	Checks     []CheckResult `json:"checks"`
 }
 
+type WatchSummary struct {
+	NewListeners        int `json:"new_listeners"`
+	FailedLogins        int `json:"failed_logins"`
+	NewUsers            int `json:"new_users"`
+	NewServices         int `json:"new_services"`
+	SuspiciousProcesses int `json:"suspicious_processes"`
+	UnusualConnections  int `json:"unusual_connections"`
+}
+
 type Assessment struct {
-	Status  Status   `json:"status"`
-	Summary string   `json:"summary"`
-	Changes []string `json:"changes"`
-	Next    []string `json:"next"`
+	Status  Status       `json:"status"`
+	Summary string       `json:"summary"`
+	Changes []string     `json:"changes"`
+	Next    []string     `json:"next"`
+	Watch   WatchSummary `json:"watch"`
 }
 
 type PatrolReport struct {
