@@ -29,6 +29,71 @@ func (j *Journal) Append(report PatrolReport) error {
 func (j *Journal) Recent(limit int) ([]PatrolReport, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	all, err := j.readAllLocked()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || len(all) <= limit {
+		reverse(all)
+		return all, nil
+	}
+	all = all[len(all)-limit:]
+	reverse(all)
+	return all, nil
+}
+
+// NormalizeSequences repairs journals created by early development builds where
+// sequence numbers could restart after process restarts. It preserves all valid
+// reports and only rewrites the journal when the sequence is not strictly 1..N.
+func (j *Journal) NormalizeSequences() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	all, err := j.readAllLocked()
+	if err != nil {
+		return err
+	}
+	if len(all) == 0 {
+		return nil
+	}
+
+	needsRewrite := false
+	for i := range all {
+		expected := int64(i + 1)
+		if all[i].Snapshot.Sequence != expected {
+			all[i].Snapshot.Sequence = expected
+			needsRewrite = true
+		}
+	}
+	if !needsRewrite {
+		return nil
+	}
+
+	tmp := j.path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(f)
+	for _, report := range all {
+		if err := enc.Encode(report); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, j.path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func (j *Journal) readAllLocked() ([]PatrolReport, error) {
 	f, err := os.Open(j.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return []PatrolReport{}, nil
@@ -51,12 +116,6 @@ func (j *Journal) Recent(limit int) ([]PatrolReport, error) {
 	if err := s.Err(); err != nil {
 		return nil, err
 	}
-	if limit <= 0 || len(all) <= limit {
-		reverse(all)
-		return all, nil
-	}
-	all = all[len(all)-limit:]
-	reverse(all)
 	return all, nil
 }
 
