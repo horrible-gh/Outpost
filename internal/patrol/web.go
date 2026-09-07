@@ -22,7 +22,9 @@ func NewWebServer(addr string, runner *Runner) *WebServer {
 	return &WebServer{
 		addr:   addr,
 		runner: runner,
-		tmpl:   template.Must(template.New("index").Funcs(template.FuncMap{"upper": strings.ToUpper}).Parse(indexHTML)),
+		tmpl: template.Must(template.New("index").Funcs(template.FuncMap{
+			"upper": func(status Status) string { return strings.ToUpper(string(status)) },
+		}).Parse(indexHTML)),
 	}
 }
 
