@@ -30,15 +30,16 @@ type processEntry struct {
 	CommandLine    string `json:"CommandLine"`
 }
 
-type userEntry struct {
-	Name    string `json:"Name"`
-	Enabled bool   `json:"Enabled"`
+type defenderStatusEntry struct {
+	AntivirusEnabled           bool `json:"AntivirusEnabled"`
+	AntispywareEnabled         bool `json:"AntispywareEnabled"`
+	RealTimeProtectionEnabled  bool `json:"RealTimeProtectionEnabled"`
+	BehaviorMonitorEnabled     bool `json:"BehaviorMonitorEnabled"`
 }
 
-type serviceEntry struct {
-	Name     string `json:"Name"`
-	State    string `json:"State"`
-	PathName string `json:"PathName"`
+type firewallProfileEntry struct {
+	Name    string `json:"Name"`
+	Enabled bool   `json:"Enabled"`
 }
 
 func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []string, []string, WatchSummary) {
@@ -108,6 +109,35 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 			status = atLeastWarning(status)
 			changes = append(changes, fmt.Sprintf("%d process(es) are running from suspicious temporary/download locations.", len(paths)))
 			next = append(next, "Review suspicious process paths and signatures before taking action.")
+		}
+	}
+
+	if check, ok := checkByKey(current, "defender_threats"); ok && check.Status == StatusNormal {
+		watch.ThreatDetections = jsonItemCount(check.Raw)
+		if watch.ThreatDetections > 0 {
+			status = atLeastWarning(status)
+			changes = append(changes, fmt.Sprintf("Windows Defender recorded %d threat detection(s) in the last 24 hours.", watch.ThreatDetections))
+			next = append(next, "Review Defender threat resources, action status, and detection timestamps.")
+		}
+	}
+
+	if check, ok := checkByKey(current, "defender_status"); ok && check.Status == StatusNormal {
+		issues := defenderProtectionIssues(check.Raw)
+		watch.ProtectionIssues += len(issues)
+		if len(issues) > 0 {
+			status = StatusDanger
+			changes = append(changes, issues...)
+			next = append(next, "Confirm why Windows Defender protection components are disabled.")
+		}
+	}
+
+	if check, ok := checkByKey(current, "firewall"); ok && check.Status == StatusNormal {
+		issues := disabledFirewallProfiles(check.Raw)
+		watch.ProtectionIssues += len(issues)
+		if len(issues) > 0 {
+			status = atLeastWarning(status)
+			changes = append(changes, issues...)
+			next = append(next, "Confirm whether disabled firewall profiles are intentional.")
 		}
 	}
 
@@ -200,6 +230,29 @@ func suspiciousProcessPaths(raw string) []string {
 		}
 	}
 	return uniqueSorted(out)
+}
+
+func defenderProtectionIssues(raw string) []string {
+	var d defenderStatusEntry
+	if json.Unmarshal([]byte(raw), &d) != nil { return nil }
+	var issues []string
+	if !d.AntivirusEnabled { issues = append(issues, "Windows Defender antivirus is disabled.") }
+	if !d.AntispywareEnabled { issues = append(issues, "Windows Defender antispyware protection is disabled.") }
+	if !d.RealTimeProtectionEnabled { issues = append(issues, "Windows Defender real-time protection is disabled.") }
+	if !d.BehaviorMonitorEnabled { issues = append(issues, "Windows Defender behavior monitoring is disabled.") }
+	return issues
+}
+
+func disabledFirewallProfiles(raw string) []string {
+	var profiles []firewallProfileEntry
+	if json.Unmarshal([]byte(raw), &profiles) != nil {
+		var one firewallProfileEntry
+		if json.Unmarshal([]byte(raw), &one) != nil { return nil }
+		profiles = []firewallProfileEntry{one}
+	}
+	var issues []string
+	for _, p := range profiles { if !p.Enabled { issues = append(issues, fmt.Sprintf("Windows Firewall profile %s is disabled.", p.Name)) } }
+	return issues
 }
 
 func addedNamedObjects(currentRaw, previousRaw, field string) []string {
