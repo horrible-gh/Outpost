@@ -26,6 +26,9 @@ type Runner struct {
 
 func NewRunner(cfg RunnerConfig) *Runner {
 	r := &Runner{cfg: cfg, journal: NewJournal(cfg.Journal)}
+	if err := r.journal.NormalizeSequences(); err != nil {
+		slog.Warn("journal sequence normalization failed", "error", err)
+	}
 	if recent, err := r.journal.Recent(1); err == nil && len(recent) == 1 {
 		report := recent[0]
 		r.latest = &report
@@ -62,6 +65,7 @@ func (r *Runner) RunOnce(parent context.Context) (PatrolReport, error) {
 	r.mu.RUnlock()
 
 	snapshot := CollectLocal(ctx)
+	RefineSnapshot(ctx, &snapshot)
 	snapshot.Sequence = sequence
 	assessment := Analyze(snapshot, previous)
 	report := PatrolReport{Snapshot: snapshot, Assessment: assessment, Baseline: previous == nil}
