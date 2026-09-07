@@ -3,6 +3,7 @@ package patrol
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 )
@@ -14,21 +15,41 @@ type diskEntry struct {
 }
 
 type networkEntry struct {
-	State        int    `json:"State"`
-	LocalAddress string `json:"LocalAddress"`
-	LocalPort    int    `json:"LocalPort"`
+	State         int    `json:"State"`
+	LocalAddress  string `json:"LocalAddress"`
+	LocalPort     int    `json:"LocalPort"`
+	RemoteAddress string `json:"RemoteAddress"`
+	RemotePort    int    `json:"RemotePort"`
+	OwningProcess int    `json:"OwningProcess"`
 }
 
-func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []string, []string) {
+type processEntry struct {
+	Name           string `json:"Name"`
+	ProcessID      int    `json:"ProcessId"`
+	ExecutablePath string `json:"ExecutablePath"`
+	CommandLine    string `json:"CommandLine"`
+}
+
+type userEntry struct {
+	Name    string `json:"Name"`
+	Enabled bool   `json:"Enabled"`
+}
+
+type serviceEntry struct {
+	Name     string `json:"Name"`
+	State    string `json:"State"`
+	PathName string `json:"PathName"`
+}
+
+func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []string, []string, WatchSummary) {
 	status := StatusNormal
 	var changes []string
 	var next []string
+	watch := WatchSummary{}
 
 	if check, ok := checkByKey(current, "disk"); ok && check.Status == StatusNormal {
 		for _, d := range decodeDisks(check.Raw) {
-			if d.Size <= 0 {
-				continue
-			}
+			if d.Size <= 0 { continue }
 			used := (1 - d.FreeSpace/d.Size) * 100
 			if used >= 95 {
 				status = StatusDanger
@@ -41,29 +62,27 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 	}
 
 	if check, ok := checkByKey(current, "failed_logins"); ok && check.Status == StatusNormal {
-		count := jsonItemCount(check.Raw)
-		if count > 0 {
-			if status == StatusNormal {
-				status = StatusWarning
-			}
-			changes = append(changes, fmt.Sprintf("%d failed login event(s) are present in the patrol window.", count))
+		watch.FailedLogins = jsonItemCount(check.Raw)
+		if watch.FailedLogins > 0 {
+			status = atLeastWarning(status)
+			changes = append(changes, fmt.Sprintf("%d failed login event(s) are present in the patrol window.", watch.FailedLogins))
 			next = append(next, "Review failed login source addresses and account names.")
 		}
 	}
 
 	if check, ok := checkByKey(current, "network"); ok && check.Status == StatusNormal {
-		currentListeners := listeners(check.Raw)
+		curListeners := listeners(check.Raw)
+		watch.UnusualConnections = len(unusualPublicConnections(check.Raw))
+		if watch.UnusualConnections > 0 {
+			status = atLeastWarning(status)
+			changes = append(changes, fmt.Sprintf("%d public connection(s) use ports other than common web ports.", watch.UnusualConnections))
+			next = append(next, "Review unusual public destinations and their owning processes.")
+		}
 		if previous == nil {
 			var sensitive []string
-			for listener := range currentListeners {
-				if sensitiveListener(listener) {
-					sensitive = append(sensitive, listener)
-				}
-			}
+			for l := range curListeners { if sensitiveListener(l) { sensitive = append(sensitive, l) } }
 			if len(sensitive) > 0 {
-				if status == StatusNormal {
-					status = StatusWarning
-				}
+				status = atLeastWarning(status)
 				sort.Strings(sensitive)
 				changes = append(changes, "Baseline exposes sensitive listener(s): "+strings.Join(sensitive, ", ")+".")
 				next = append(next, "Confirm that sensitive listeners are intentional and firewall-restricted.")
@@ -71,15 +90,10 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 		} else if old, ok := checkByKey(*previous, "network"); ok && old.Status == StatusNormal {
 			oldListeners := listeners(old.Raw)
 			var added []string
-			for listener := range currentListeners {
-				if _, exists := oldListeners[listener]; !exists {
-					added = append(added, listener)
-				}
-			}
+			for l := range curListeners { if _, exists := oldListeners[l]; !exists { added = append(added, l) } }
+			watch.NewListeners = len(added)
 			if len(added) > 0 {
-				if status == StatusNormal {
-					status = StatusWarning
-				}
+				status = atLeastWarning(status)
 				sort.Strings(added)
 				changes = append(changes, "New externally reachable listener(s): "+strings.Join(added, ", ")+".")
 				next = append(next, "Verify the owning process and purpose of each new listener.")
@@ -87,90 +101,136 @@ func inspectMeaningfulChanges(current Snapshot, previous *Snapshot) (Status, []s
 		}
 	}
 
-	return status, uniqueSorted(changes), uniqueSorted(next)
-}
-
-func checkByKey(snapshot Snapshot, key string) (CheckResult, bool) {
-	for _, check := range snapshot.Checks {
-		if check.Key == key {
-			return check, true
+	if check, ok := checkByKey(current, "processes"); ok && check.Status == StatusNormal {
+		paths := suspiciousProcessPaths(check.Raw)
+		watch.SuspiciousProcesses = len(paths)
+		if len(paths) > 0 {
+			status = atLeastWarning(status)
+			changes = append(changes, fmt.Sprintf("%d process(es) are running from suspicious temporary/download locations.", len(paths)))
+			next = append(next, "Review suspicious process paths and signatures before taking action.")
 		}
 	}
+
+	if previous != nil {
+		if cur, ok := checkByKey(current, "users"); ok && cur.Status == StatusNormal {
+			if old, ok := checkByKey(*previous, "users"); ok && old.Status == StatusNormal {
+				added := addedNamedObjects(cur.Raw, old.Raw, "Name")
+				watch.NewUsers = len(added)
+				if len(added) > 0 {
+					status = atLeastWarning(status)
+					changes = append(changes, "New local account(s): "+strings.Join(added, ", ")+".")
+					next = append(next, "Confirm that each new local account is expected.")
+				}
+			}
+		}
+		if cur, ok := checkByKey(current, "services"); ok && cur.Status == StatusNormal {
+			if old, ok := checkByKey(*previous, "services"); ok && old.Status == StatusNormal {
+				added := addedNamedObjects(cur.Raw, old.Raw, "Name")
+				watch.NewServices = len(added)
+				if len(added) > 0 {
+					status = atLeastWarning(status)
+					changes = append(changes, "New auto-start service(s): "+strings.Join(added, ", ")+".")
+					next = append(next, "Verify new auto-start services and their executable paths.")
+				}
+			}
+		}
+	}
+
+	return status, uniqueSorted(changes), uniqueSorted(next), watch
+}
+
+func atLeastWarning(s Status) Status { if s == StatusDanger { return s }; return StatusWarning }
+
+func checkByKey(snapshot Snapshot, key string) (CheckResult, bool) {
+	for _, check := range snapshot.Checks { if check.Key == key { return check, true } }
 	return CheckResult{}, false
 }
 
 func decodeDisks(raw string) []diskEntry {
 	var many []diskEntry
-	if json.Unmarshal([]byte(raw), &many) == nil {
-		return many
-	}
+	if json.Unmarshal([]byte(raw), &many) == nil { return many }
 	var one diskEntry
-	if json.Unmarshal([]byte(raw), &one) == nil {
-		return []diskEntry{one}
-	}
+	if json.Unmarshal([]byte(raw), &one) == nil { return []diskEntry{one} }
+	return nil
+}
+
+func decodeNetwork(raw string) []networkEntry {
+	var many []networkEntry
+	if json.Unmarshal([]byte(raw), &many) == nil { return many }
+	var one networkEntry
+	if json.Unmarshal([]byte(raw), &one) == nil { return []networkEntry{one} }
 	return nil
 }
 
 func listeners(raw string) map[string]struct{} {
-	var many []networkEntry
-	if json.Unmarshal([]byte(raw), &many) != nil {
-		var one networkEntry
-		if json.Unmarshal([]byte(raw), &one) != nil {
-			return map[string]struct{}{}
-		}
-		many = []networkEntry{one}
-	}
 	out := make(map[string]struct{})
-	for _, n := range many {
-		if n.State != 2 || n.LocalPort <= 0 || n.LocalAddress == "127.0.0.1" || n.LocalAddress == "::1" {
-			continue
-		}
+	for _, n := range decodeNetwork(raw) {
+		if n.State != 2 || n.LocalPort <= 0 || n.LocalAddress == "127.0.0.1" || n.LocalAddress == "::1" { continue }
 		addr := n.LocalAddress
-		if addr == "0.0.0.0" || addr == "::" || addr == "" {
-			addr = "*"
-		}
+		if addr == "0.0.0.0" || addr == "::" || addr == "" { addr = "*" }
 		out[fmt.Sprintf("%s:%d", addr, n.LocalPort)] = struct{}{}
 	}
 	return out
 }
 
+func unusualPublicConnections(raw string) []string {
+	set := map[string]struct{}{}
+	for _, n := range decodeNetwork(raw) {
+		if n.State != 5 || n.RemotePort <= 0 || n.RemoteAddress == "" || n.RemotePort == 80 || n.RemotePort == 443 { continue }
+		ip := net.ParseIP(strings.Trim(n.RemoteAddress, "[]"))
+		if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() { continue }
+		set[fmt.Sprintf("%s:%d", n.RemoteAddress, n.RemotePort)] = struct{}{}
+	}
+	out := make([]string, 0, len(set)); for v := range set { out = append(out, v) }; sort.Strings(out); return out
+}
+
+func suspiciousProcessPaths(raw string) []string {
+	var many []processEntry
+	if json.Unmarshal([]byte(raw), &many) != nil {
+		var one processEntry
+		if json.Unmarshal([]byte(raw), &one) != nil { return nil }
+		many = []processEntry{one}
+	}
+	var out []string
+	for _, p := range many {
+		path := strings.ToLower(strings.ReplaceAll(p.ExecutablePath, "/", "\\"))
+		if path == "" { continue }
+		if strings.Contains(path, "\\temp\\") || strings.Contains(path, "\\downloads\\") || strings.HasPrefix(path, "c:\\windows\\temp\\") {
+			out = append(out, fmt.Sprintf("%s (%s)", p.Name, p.ExecutablePath))
+		}
+	}
+	return uniqueSorted(out)
+}
+
+func addedNamedObjects(currentRaw, previousRaw, field string) []string {
+	decode := func(raw string) map[string]struct{} {
+		var many []map[string]any
+		if json.Unmarshal([]byte(raw), &many) != nil {
+			var one map[string]any
+			if json.Unmarshal([]byte(raw), &one) == nil { many = []map[string]any{one} }
+		}
+		set := map[string]struct{}{}
+		for _, item := range many { if v, ok := item[field].(string); ok && v != "" { set[v] = struct{}{} } }
+		return set
+	}
+	cur, old := decode(currentRaw), decode(previousRaw)
+	var added []string
+	for name := range cur { if _, exists := old[name]; !exists { added = append(added, name) } }
+	sort.Strings(added); return added
+}
+
 func jsonItemCount(raw string) int {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "[]" || raw == "null" {
-		return 0
-	}
-	var many []json.RawMessage
-	if json.Unmarshal([]byte(raw), &many) == nil {
-		return len(many)
-	}
-	var one json.RawMessage
-	if json.Unmarshal([]byte(raw), &one) == nil {
-		return 1
-	}
-	return 0
+	raw = strings.TrimSpace(raw); if raw == "" || raw == "[]" || raw == "null" { return 0 }
+	var many []json.RawMessage; if json.Unmarshal([]byte(raw), &many) == nil { return len(many) }
+	var one json.RawMessage; if json.Unmarshal([]byte(raw), &one) == nil { return 1 }; return 0
 }
 
 func sensitiveListener(value string) bool {
-	for _, port := range []string{":22", ":135", ":139", ":445", ":3389", ":5985", ":5986"} {
-		if strings.HasSuffix(value, port) {
-			return true
-		}
-	}
+	for _, port := range []string{":22", ":135", ":139", ":445", ":3389", ":5985", ":5986"} { if strings.HasSuffix(value, port) { return true } }
 	return false
 }
 
 func uniqueSorted(values []string) []string {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			set[value] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(set))
-	for value := range set {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	set := make(map[string]struct{}, len(values)); for _, value := range values { value = strings.TrimSpace(value); if value != "" { set[value] = struct{}{} } }
+	out := make([]string, 0, len(set)); for value := range set { out = append(out, value) }; sort.Strings(out); return out
 }
