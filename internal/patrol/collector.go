@@ -27,8 +27,7 @@ func CollectLocal(ctx context.Context) Snapshot {
 		StartedAt: time.Now(),
 	}
 
-	checks := checksForOS(runtime.GOOS)
-	for _, check := range checks {
+	for _, check := range checksForOS(runtime.GOOS) {
 		snapshot.Checks = append(snapshot.Checks, runCheck(ctx, check))
 	}
 	snapshot.FinishedAt = time.Now()
@@ -37,29 +36,29 @@ func CollectLocal(ctx context.Context) Snapshot {
 
 func checksForOS(goos string) []commandCheck {
 	if goos == "windows" {
+		prefix := `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); `
 		return []commandCheck{
-			{Key: "disk", Name: "Disk", Command: "powershell", Args: psArgs(`Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Json -Compress`)},
-			{Key: "processes", Name: "Processes", Command: "powershell", Args: psArgs(`Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress`)},
-			{Key: "network", Name: "Network", Command: "powershell", Args: psArgs(`Get-NetTCPConnection -State Established,Listen -ErrorAction SilentlyContinue | Select-Object -First 100 State,LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess | ConvertTo-Json -Compress`)},
-			{Key: "login_history", Name: "Login history", Command: "powershell", Args: psArgs(`$start=(Get-Date).AddHours(-24); $events=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=$start} -MaxEvents 30 -ErrorAction SilentlyContinue); if($events.Count -eq 0){'[]'}else{$events | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress}`)},
-			{Key: "failed_logins", Name: "Failed logins", Command: "powershell", Args: psArgs(`$start=(Get-Date).AddHours(-24); $events=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=$start} -MaxEvents 30 -ErrorAction SilentlyContinue); if($events.Count -eq 0){'[]'}else{$events | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress}`)},
-			{Key: "security_updates", Name: "Security updates", Command: "powershell", Args: psArgs(`Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,Description,InstalledOn | ConvertTo-Json -Compress`)},
+			{Key: "disk", Name: "Disk", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Json -Compress`}},
+			{Key: "processes", Name: "Processes", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ExecutablePath,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`}},
+			{Key: "network", Name: "Network", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-NetTCPConnection -State Established,Listen -ErrorAction SilentlyContinue | Select-Object State,LocalAddress,LocalPort,RemoteAddress,RemotePort,OwningProcess | ConvertTo-Json -Compress`}},
+			{Key: "login_history", Name: "Login history", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `$start=(Get-Date).AddHours(-24); $e=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=$start} -MaxEvents 30 -ErrorAction SilentlyContinue); $e | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress; if($e.Count -eq 0){'[]'}`}},
+			{Key: "failed_logins", Name: "Failed logins", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `$start=(Get-Date).AddHours(-24); $e=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=$start} -MaxEvents 30 -ErrorAction SilentlyContinue); $e | Select-Object TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Compress; if($e.Count -eq 0){'[]'}`}},
+			{Key: "users", Name: "Local users", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-LocalUser | Select-Object Name,Enabled,SID,LastLogon | ConvertTo-Json -Compress`}},
+			{Key: "services", Name: "Auto-start services", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-CimInstance Win32_Service | Where-Object {$_.StartMode -eq 'Auto'} | Select-Object Name,State,StartMode,StartName,PathName | ConvertTo-Json -Compress`}},
+			{Key: "security_updates", Name: "Security updates", Command: "powershell", Args: []string{"-NoProfile", "-NonInteractive", "-Command", prefix + `Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 20 HotFixID,Description,InstalledOn | ConvertTo-Json -Compress`}},
 		}
 	}
 
 	return []commandCheck{
 		{Key: "disk", Name: "Disk", Command: "df", Args: []string{"-P", "-h"}},
-		{Key: "processes", Name: "Processes", Command: "sh", Args: []string{"-c", `ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 25`}},
+		{Key: "processes", Name: "Processes", Command: "sh", Args: []string{"-c", `ps -eo pid,user,%cpu,%mem,comm,args --sort=-%cpu | head -n 80`}},
 		{Key: "network", Name: "Network", Command: "sh", Args: []string{"-c", `ss -tunap 2>/dev/null || netstat -tunap 2>/dev/null`}},
 		{Key: "login_history", Name: "Login history", Command: "sh", Args: []string{"-c", `last -ai -n 30 2>/dev/null`}},
 		{Key: "failed_logins", Name: "Failed logins", Command: "sh", Args: []string{"-c", `lastb -ai -n 30 2>/dev/null`}},
+		{Key: "users", Name: "Local users", Command: "sh", Args: []string{"-c", `getent passwd 2>/dev/null`}},
+		{Key: "services", Name: "Auto-start services", Command: "sh", Args: []string{"-c", `systemctl list-unit-files --type=service --state=enabled --no-legend --no-pager 2>/dev/null || true`}},
 		{Key: "security_updates", Name: "Security updates", Command: "sh", Args: []string{"-c", `(command -v apt >/dev/null && apt list --upgradable 2>/dev/null | head -n 50) || (command -v dnf >/dev/null && dnf check-update --security 2>/dev/null | head -n 50) || true`}},
 	}
-}
-
-func psArgs(script string) []string {
-	prefix := `[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; `
-	return []string{"-NoProfile", "-NonInteractive", "-Command", prefix + script}
 }
 
 func runCheck(ctx context.Context, check commandCheck) CheckResult {
@@ -67,14 +66,7 @@ func runCheck(ctx context.Context, check commandCheck) CheckResult {
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 
-	result := CheckResult{
-		Key:     check.Key,
-		Name:    check.Name,
-		Status:  StatusNormal,
-		Summary: "collected",
-		Raw:     text,
-	}
-
+	result := CheckResult{Key: check.Key, Name: check.Name, Status: StatusNormal, Summary: "collected", Raw: text}
 	if err != nil {
 		result.Status = StatusUnknown
 		result.Summary = "check unavailable"
