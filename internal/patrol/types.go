@@ -40,12 +40,20 @@ type WatchSummary struct {
 	ProtectionIssues    int `json:"protection_issues"`
 }
 
+type Finding struct {
+	Category string `json:"category"`
+	Severity Status `json:"severity"`
+	Message  string `json:"message"`
+}
+
 type Assessment struct {
-	Status  Status       `json:"status"`
-	Summary string       `json:"summary"`
-	Changes []string     `json:"changes"`
-	Next    []string     `json:"next"`
-	Watch   WatchSummary `json:"watch"`
+	Status    Status       `json:"status"`
+	RiskScore int          `json:"risk_score"`
+	Summary   string       `json:"summary"`
+	Changes   []string     `json:"changes"`
+	Next      []string     `json:"next"`
+	Watch     WatchSummary `json:"watch"`
+	Findings  []Finding    `json:"findings"`
 }
 
 type PatrolReport struct {
