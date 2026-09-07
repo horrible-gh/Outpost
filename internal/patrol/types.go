@@ -36,6 +36,8 @@ type WatchSummary struct {
 	NewServices         int `json:"new_services"`
 	SuspiciousProcesses int `json:"suspicious_processes"`
 	UnusualConnections  int `json:"unusual_connections"`
+	ThreatDetections    int `json:"threat_detections"`
+	ProtectionIssues    int `json:"protection_issues"`
 }
 
 type Assessment struct {
