@@ -2,37 +2,42 @@ package patrol
 
 import "time"
 
-type Severity string
+type Status string
 
 const (
-	SeverityNormal  Severity = "normal"
-	SeverityWarning Severity = "warning"
-	SeverityDanger  Severity = "danger"
-	SeverityUnknown Severity = "unknown"
+	StatusNormal  Status = "normal"
+	StatusWarning Status = "warning"
+	StatusDanger  Status = "danger"
+	StatusUnknown Status = "unknown"
 )
 
-type Check struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Severity Severity `json:"severity"`
-	Summary  string   `json:"summary"`
-	Detail   string   `json:"detail,omitempty"`
-}
-
-type Report struct {
-	ID         string    `json:"id"`
-	Target     string    `json:"target"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at"`
-	Status     Severity  `json:"status"`
-	Checks     []Check   `json:"checks"`
-	Assessment []string  `json:"assessment"`
-	Next       []string  `json:"next"`
+type CheckResult struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Status      Status `json:"status"`
+	Summary     string `json:"summary"`
+	Raw         string `json:"raw,omitempty"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 type Snapshot struct {
-	Target    string            `json:"target"`
-	Collected time.Time         `json:"collected"`
-	Values    map[string]string `json:"values"`
-	Evidence  map[string]string `json:"evidence"`
+	Sequence   int64         `json:"sequence"`
+	Target     string        `json:"target"`
+	OS         string        `json:"os"`
+	StartedAt  time.Time     `json:"started_at"`
+	FinishedAt time.Time     `json:"finished_at"`
+	Checks     []CheckResult `json:"checks"`
+}
+
+type Assessment struct {
+	Status  Status   `json:"status"`
+	Summary string   `json:"summary"`
+	Changes []string `json:"changes"`
+	Next    []string `json:"next"`
+}
+
+type PatrolReport struct {
+	Snapshot   Snapshot   `json:"snapshot"`
+	Assessment Assessment `json:"assessment"`
+	Baseline   bool       `json:"baseline"`
 }
