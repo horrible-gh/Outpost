@@ -2,7 +2,7 @@ package patrol
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -16,73 +16,89 @@ type RunnerConfig struct {
 }
 
 type Runner struct {
-	cfg       RunnerConfig
-	collector Collector
-	analyzer  Analyzer
-	journal   *Journal
-	mu        sync.RWMutex
-	last      *Snapshot
-	latest    *Report
+	cfg      RunnerConfig
+	journal  *Journal
+	mu       sync.RWMutex
+	latest   *PatrolReport
+	previous *Snapshot
+	sequence int64
 }
 
 func NewRunner(cfg RunnerConfig) *Runner {
-	if cfg.Interval <= 0 { cfg.Interval = time.Hour }
-	if cfg.Timeout <= 0 { cfg.Timeout = 30 * time.Second }
-	if cfg.Journal == "" { cfg.Journal = "outpost-journal.jsonl" }
 	return &Runner{
-		cfg: cfg,
-		collector: NewLocalCollector(),
-		analyzer: NewHeuristicAnalyzer(),
+		cfg:     cfg,
 		journal: NewJournal(cfg.Journal),
 	}
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	if r.cfg.RunOnBoot {
-		if _, err := r.RunOnce(ctx); err != nil { slog.Warn("initial patrol failed", "error", err) }
+	if r.cfg.Interval <= 0 {
+		return errors.New("patrol interval must be greater than zero")
 	}
+	if r.cfg.Timeout <= 0 {
+		return errors.New("patrol timeout must be greater than zero")
+	}
+
+	if r.cfg.RunOnBoot {
+		if _, err := r.RunOnce(ctx); err != nil {
+			slog.Warn("initial patrol failed", "error", err)
+		}
+	}
+
 	ticker := time.NewTicker(r.cfg.Interval)
 	defer ticker.Stop()
+
 	for {
 		select {
-		case <-ctx.Done(): return nil
+		case <-ctx.Done():
+			return nil
 		case <-ticker.C:
-			if _, err := r.RunOnce(ctx); err != nil { slog.Warn("scheduled patrol failed", "error", err) }
+			if _, err := r.RunOnce(ctx); err != nil {
+				slog.Warn("scheduled patrol failed", "error", err)
+			}
 		}
 	}
 }
 
-func (r *Runner) RunOnce(parent context.Context) (Report, error) {
+func (r *Runner) RunOnce(parent context.Context) (PatrolReport, error) {
 	ctx, cancel := context.WithTimeout(parent, r.cfg.Timeout)
 	defer cancel()
-	started := time.Now()
-	current := r.collector.Collect(ctx)
 
 	r.mu.RLock()
-	prev := r.last
+	previous := r.previous
+	sequence := r.sequence + 1
 	r.mu.RUnlock()
-	checks, assessment, next, status := r.analyzer.Analyze(current, prev)
-	report := Report{
-		ID: fmt.Sprintf("%d", started.UnixNano()), Target: current.Target,
-		StartedAt: started, FinishedAt: time.Now(), Status: status,
-		Checks: checks, Assessment: assessment, Next: next,
+
+	snapshot := CollectLocal(ctx)
+	snapshot.Sequence = sequence
+	assessment := Analyze(snapshot, previous)
+	report := PatrolReport{
+		Snapshot:   snapshot,
+		Assessment: assessment,
+		Baseline:   previous == nil,
 	}
-	if err := r.journal.Append(report); err != nil { return report, err }
+
+	if err := r.journal.Append(report); err != nil {
+		return report, err
+	}
 
 	r.mu.Lock()
-	r.last = &current
 	r.latest = &report
+	copySnapshot := snapshot
+	r.previous = &copySnapshot
+	r.sequence = sequence
 	r.mu.Unlock()
-	slog.Info("patrol completed", "target", report.Target, "status", report.Status, "checks", len(report.Checks))
+
+	slog.Info("patrol completed", "sequence", sequence, "target", snapshot.Target, "status", assessment.Status, "baseline", report.Baseline)
 	return report, nil
 }
 
-func (r *Runner) Latest() *Report {
+func (r *Runner) Latest() *PatrolReport {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.latest == nil { return nil }
-	copy := *r.latest
-	return &copy
+	if r.latest == nil {
+		return nil
+	}
+	copyReport := *r.latest
+	return &copyReport
 }
-
-func (r *Runner) Recent(limit int) ([]Report, error) { return r.journal.Recent(limit) }
