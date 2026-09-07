@@ -1,0 +1,5 @@
+outpost
+outpost.exe
+outpost-journal.jsonl
+*.log
+.DS_Store
