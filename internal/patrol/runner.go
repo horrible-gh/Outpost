@@ -25,10 +25,18 @@ type Runner struct {
 }
 
 func NewRunner(cfg RunnerConfig) *Runner {
-	return &Runner{
+	r := &Runner{
 		cfg:     cfg,
 		journal: NewJournal(cfg.Journal),
 	}
+	if recent, err := r.journal.Recent(1); err == nil && len(recent) == 1 {
+		report := recent[0]
+		r.latest = &report
+		snapshot := report.Snapshot
+		r.previous = &snapshot
+		r.sequence = snapshot.Sequence
+	}
+	return r
 }
 
 func (r *Runner) Run(ctx context.Context) error {
