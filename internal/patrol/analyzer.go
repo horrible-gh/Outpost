@@ -34,6 +34,8 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 	changes = append(changes, pressureChanges...)
 	next = append(next, pressureNext...)
 
+	changes = enrichChanges(current, changes)
+
 	if previous == nil {
 		changes = append(changes, "Baseline established from the first patrol.")
 		next = append(next, "Compare the next patrol with this baseline.")
@@ -45,15 +47,7 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 	assessment.Changes = uniqueSorted(changes)
 	assessment.Next = uniqueSorted(next)
 	assessment.Findings, assessment.RiskScore = classifyFindings(assessment.Changes, assessment.Watch)
-
-	switch assessment.Status {
-	case StatusDanger:
-		assessment.Summary = "High-risk evidence or critical resource pressure was detected. Review the findings before taking any action."
-	case StatusWarning:
-		assessment.Summary = "The patrol found exposure, resource pressure, or a meaningful change that should be reviewed. No compromise is confirmed."
-	case StatusUnknown:
-		assessment.Summary = "The patrol could not collect enough evidence to make a reliable assessment."
-	}
+	assessment.Summary = buildAssessmentSummary(assessment)
 	return assessment
 }
 
