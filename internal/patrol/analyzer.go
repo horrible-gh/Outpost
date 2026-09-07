@@ -32,6 +32,8 @@ func Analyze(current Snapshot, previous *Snapshot) Assessment {
 
 	assessment.Changes = uniqueSorted(changes)
 	assessment.Next = uniqueSorted(next)
+	assessment.Findings, assessment.RiskScore = classifyFindings(assessment.Changes, assessment.Watch)
+
 	switch assessment.Status {
 	case StatusDanger:
 		assessment.Summary = "High-risk evidence was detected. Review the findings before taking any action."
