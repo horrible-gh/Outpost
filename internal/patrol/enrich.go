@@ -1,6 +1,16 @@
 package patrol
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+type signatureEntry struct {
+	Path   string `json:"Path"`
+	Status string `json:"Status"`
+	Signer string `json:"Signer"`
+}
 
 func enrichChanges(current Snapshot, changes []string) []string {
 	check, ok := checkByKey(current, "processes")
@@ -12,7 +22,14 @@ func enrichChanges(current Snapshot, changes []string) []string {
 		return changes
 	}
 
-	replacement := "Suspicious process path(s): " + strings.Join(paths, "; ") + "."
+	replacement := "Suspicious process path(s): " + strings.Join(paths, "; ")
+	if signatureCheck, ok := checkByKey(current, "process_signatures"); ok && signatureCheck.Status == StatusNormal {
+		if detail := signatureSummary(signatureCheck.Raw); detail != "" {
+			replacement += ". Signature check: " + detail
+		}
+	}
+	replacement += "."
+
 	out := make([]string, 0, len(changes))
 	replaced := false
 	for _, change := range changes {
@@ -30,6 +47,28 @@ func enrichChanges(current Snapshot, changes []string) []string {
 		out = append(out, replacement)
 	}
 	return out
+}
+
+func signatureSummary(raw string) string {
+	var many []signatureEntry
+	if json.Unmarshal([]byte(raw), &many) != nil {
+		var one signatureEntry
+		if json.Unmarshal([]byte(raw), &one) != nil || one.Path == "" { return "" }
+		many = []signatureEntry{one}
+	}
+	parts := make([]string, 0, len(many))
+	for _, item := range many {
+		name := item.Path
+		if idx := strings.LastIndexAny(name, `\\/`); idx >= 0 && idx+1 < len(name) { name = name[idx+1:] }
+		status := item.Status
+		if status == "" { status = "Unknown" }
+		if item.Signer != "" {
+			parts = append(parts, fmt.Sprintf("%s=%s (%s)", name, status, item.Signer))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=%s", name, status))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func buildAssessmentSummary(a Assessment) string {
