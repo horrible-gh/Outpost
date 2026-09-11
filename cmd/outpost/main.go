@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/horrible-gh/Outpost/internal/monitor"
 	"github.com/horrible-gh/Outpost/internal/patrol"
 )
 
@@ -17,6 +18,9 @@ func main() {
 	interval := flag.Duration("interval", time.Hour, "patrol interval")
 	journal := flag.String("journal", "outpost-journal.jsonl", "journal JSONL path")
 	timeout := flag.Duration("timeout", 30*time.Second, "maximum patrol duration")
+	serviceInterval := flag.Duration("service-interval", 5*time.Minute, "external service monitor interval")
+	serviceTimeout := flag.Duration("service-timeout", 10*time.Second, "external service check timeout")
+	serviceConfig := flag.String("service-config", "outpost-services.json", "external service monitor configuration path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -31,13 +35,20 @@ func main() {
 		Journal:   *journal,
 		RunOnBoot: true,
 	})
-	web := patrol.NewWebServer(*listen, runner)
+	serviceRunner := monitor.NewRunner(monitor.RunnerConfig{
+		Interval:   *serviceInterval,
+		Timeout:    *serviceTimeout,
+		ConfigPath: *serviceConfig,
+		RunOnBoot:  true,
+	})
+	web := patrol.NewWebServer(*listen, runner, serviceRunner)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- runner.Run(ctx) }()
+	go func() { errCh <- serviceRunner.Run(ctx) }()
 	go func() { errCh <- web.Run(ctx) }()
 
-	slog.Info("outpost started", "listen", *listen, "interval", interval.String(), "journal", *journal)
+	slog.Info("outpost started", "listen", *listen, "interval", interval.String(), "journal", *journal, "service_interval", serviceInterval.String(), "service_config", *serviceConfig)
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
