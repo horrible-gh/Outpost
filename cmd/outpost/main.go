@@ -14,13 +14,13 @@ import (
 )
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:8787", "web console listen address")
+	listen := flag.String("listen", "127.0.0.1:6877", "web console listen address")
 	interval := flag.Duration("interval", time.Hour, "patrol interval")
 	journal := flag.String("journal", "outpost-journal.jsonl", "journal JSONL path")
 	timeout := flag.Duration("timeout", 30*time.Second, "maximum patrol duration")
 	serviceInterval := flag.Duration("service-interval", 5*time.Minute, "external service monitor interval")
-	serviceTimeout := flag.Duration("service-timeout", 10*time.Second, "external service check timeout")
-	serviceConfig := flag.String("service-config", "outpost-services.json", "external service monitor configuration path")
+	serviceTimeout := flag.Duration("service-timeout", 10*time.Second, "external service monitor timeout")
+	serviceConfig := flag.String("service-config", "outpost-services.json", "external service monitor config path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -35,11 +35,10 @@ func main() {
 		Journal:   *journal,
 		RunOnBoot: true,
 	})
-	serviceRunner := monitor.NewRunner(monitor.RunnerConfig{
-		Interval:   *serviceInterval,
-		Timeout:    *serviceTimeout,
-		ConfigPath: *serviceConfig,
-		RunOnBoot:  true,
+	serviceRunner := monitor.NewRunner(monitor.Config{
+		Interval: *serviceInterval,
+		Timeout:  *serviceTimeout,
+		Path:     *serviceConfig,
 	})
 	web := patrol.NewWebServer(*listen, runner, serviceRunner)
 
