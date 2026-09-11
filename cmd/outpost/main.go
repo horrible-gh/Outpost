@@ -35,10 +35,11 @@ func main() {
 		Journal:   *journal,
 		RunOnBoot: true,
 	})
-	serviceRunner := monitor.NewRunner(monitor.Config{
-		Interval: *serviceInterval,
-		Timeout:  *serviceTimeout,
-		Path:     *serviceConfig,
+	serviceRunner := monitor.NewRunner(monitor.RunnerConfig{
+		Interval:   *serviceInterval,
+		Timeout:    *serviceTimeout,
+		ConfigPath: *serviceConfig,
+		RunOnBoot:  true,
 	})
 	web := patrol.NewWebServer(*listen, runner, serviceRunner)
 
