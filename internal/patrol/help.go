@@ -113,14 +113,13 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 				"change target accounts or credentials",
 				"change target firewall rules",
 				"perform automatic remediation",
-			,
+			},
 			AccessControl: []string{
 				"Outpost currently has no built-in HTTP authentication or authorization layer.",
 				"The default listen address is loopback-only (127.0.0.1:6877).",
 				"If the listen address is exposed beyond loopback for phone/remote access, place Outpost behind a trusted tunnel, VPN, or authenticated reverse proxy.",
 				"Treat service-target configuration and journal-write endpoints as local administrative capabilities.",
 			},
-		},
 		},
 		RecommendedFlow: []APIHelpFlowStep{
 			{
