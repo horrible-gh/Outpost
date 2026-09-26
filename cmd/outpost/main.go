@@ -16,7 +16,8 @@ import (
 func main() {
 	listen := flag.String("listen", "127.0.0.1:6877", "web console listen address")
 	interval := flag.Duration("interval", time.Hour, "patrol interval")
-	journal := flag.String("journal", "outpost-journal.jsonl", "journal JSONL path")
+	journal := flag.String("journal", "outpost-journal.jsonl", "structured patrol journal JSONL path")
+	mdJournalDir := flag.String("md-journal-dir", "outpost-journals", "AI/autonomous patrol Markdown journal directory")
 	timeout := flag.Duration("timeout", 30*time.Second, "maximum patrol duration")
 	serviceInterval := flag.Duration("service-interval", 5*time.Minute, "external service monitor interval")
 	serviceTimeout := flag.Duration("service-timeout", 10*time.Second, "external service monitor timeout")
@@ -30,10 +31,11 @@ func main() {
 	defer stop()
 
 	runner := patrol.NewRunner(patrol.RunnerConfig{
-		Interval:  *interval,
-		Timeout:   *timeout,
-		Journal:   *journal,
-		RunOnBoot: true,
+		Interval:           *interval,
+		Timeout:            *timeout,
+		Journal:            *journal,
+		MarkdownJournalDir: *mdJournalDir,
+		RunOnBoot:          true,
 	})
 	serviceRunner := monitor.NewRunner(monitor.RunnerConfig{
 		Interval:   *serviceInterval,
@@ -48,7 +50,14 @@ func main() {
 	go func() { errCh <- serviceRunner.Run(ctx) }()
 	go func() { errCh <- web.Run(ctx) }()
 
-	slog.Info("outpost started", "listen", *listen, "interval", interval.String(), "journal", *journal, "service_interval", serviceInterval.String(), "service_config", *serviceConfig)
+	slog.Info("outpost started",
+		"listen", *listen,
+		"interval", interval.String(),
+		"journal", *journal,
+		"md_journal_dir", *mdJournalDir,
+		"service_interval", serviceInterval.String(),
+		"service_config", *serviceConfig,
+	)
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
