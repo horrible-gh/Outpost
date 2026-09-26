@@ -226,10 +226,10 @@ func repeatedFindingSignals(history []PatrolReport) []AttentionSignal {
 func trimJournalBodies(journals []AgentJournalEntry) []AgentJournalEntry {
 	out := make([]AgentJournalEntry, len(journals))
 	for i, journal := range journals {
-		journal.Markdown = ""
 		if journal.Preview == "" {
 			journal.Preview = markdownPreview(journal.Markdown, 360)
 		}
+		journal.Markdown = ""
 		out[i] = journal
 	}
 	return out
