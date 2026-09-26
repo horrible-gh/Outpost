@@ -1,6 +1,7 @@
 package patrol
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -95,5 +96,105 @@ func TestWebAgentJournalAndContextAPI(t *testing.T) {
 		if !strings.Contains(contextRec.Body.String(), want) {
 			t.Fatalf("expected agent context to contain %q: %s", want, contextRec.Body.String())
 		}
+	}
+}
+
+
+func TestAPIHelpDocumentsEveryRegisteredAPIRoute(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(RunnerConfig{
+		Interval:           time.Hour,
+		Timeout:            30 * time.Second,
+		Journal:            filepath.Join(dir, "journal.jsonl"),
+		MarkdownJournalDir: filepath.Join(dir, "journals"),
+	})
+	server := NewWebServer("127.0.0.1:6877", runner)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/help", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected help 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var help APIHelp
+	if err := json.Unmarshal(rec.Body.Bytes(), &help); err != nil {
+		t.Fatalf("decode help: %v", err)
+	}
+	if help.Entrypoint != "/api/help" {
+		t.Fatalf("unexpected entrypoint %q", help.Entrypoint)
+	}
+	if help.Runtime.ListenAddress != "127.0.0.1:6877" {
+		t.Fatalf("unexpected listen address %q", help.Runtime.ListenAddress)
+	}
+	if help.Runtime.PatrolInterval != "1h0m0s" || help.Runtime.PatrolTimeout != "30s" {
+		t.Fatalf("unexpected patrol runtime: %#v", help.Runtime)
+	}
+	if help.Safety.TargetMutations {
+		t.Fatalf("help must preserve read-only target policy")
+	}
+
+	got := map[string]bool{}
+	for _, group := range help.EndpointGroups {
+		for _, endpoint := range group.Endpoints {
+			got[endpoint.Method+" "+endpoint.Path] = true
+		}
+	}
+	want := []string{
+		"GET /api/help",
+		"GET /api/status",
+		"GET /api/patrols",
+		"GET /api/review-packet",
+		"GET /api/agent/context",
+		"GET /api/journals",
+		"GET /api/journals/{id}",
+		"POST /api/journals",
+		"POST /api/patrols/run",
+		"GET /api/services",
+		"POST /api/services",
+		"POST /api/services/run",
+		"POST /api/services/{id}/run",
+		"DELETE /api/services/{id}",
+	}
+	for _, route := range want {
+		if !got[route] {
+			t.Fatalf("help is missing registered route %q", route)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("help route count drift: got %d, expected %d: %#v", len(got), len(want), got)
+	}
+}
+
+func TestAPIHelpDocumentsAgentJournalContract(t *testing.T) {
+	runner := NewRunner(RunnerConfig{Journal: filepath.Join(t.TempDir(), "journal.jsonl")})
+	help := NewWebServer("127.0.0.1:0", runner).buildAPIHelp()
+
+	var journal *APIHelpEndpoint
+	for gi := range help.EndpointGroups {
+		for ei := range help.EndpointGroups[gi].Endpoints {
+			endpoint := &help.EndpointGroups[gi].Endpoints[ei]
+			if endpoint.Method == "POST" && endpoint.Path == "/api/journals" {
+				journal = endpoint
+			}
+		}
+	}
+	if journal == nil {
+		t.Fatal("POST /api/journals missing from help")
+	}
+	if !journal.MutatesOutpost || !journal.TargetReadOnly {
+		t.Fatalf("journal safety classification is wrong: %#v", journal)
+	}
+	required := map[string]bool{}
+	for _, field := range journal.Body {
+		if field.Required {
+			required[field.Name] = true
+		}
+	}
+	if !required["title"] || !required["markdown"] {
+		t.Fatalf("journal required fields missing: %#v", required)
+	}
+	if journal.ExampleBody["markdown"] == nil {
+		t.Fatalf("journal example body should include markdown")
 	}
 }
