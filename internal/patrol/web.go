@@ -80,6 +80,7 @@ func (s *WebServer) Run(ctx context.Context) error {
 func (s *WebServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /api/help", s.handleHelp)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/patrols", s.handlePatrols)
 	mux.HandleFunc("GET /api/review-packet", s.handleReviewPacket)
@@ -126,6 +127,10 @@ func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *WebServer) handleHelp(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.buildAPIHelp())
 }
 
 func (s *WebServer) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -466,7 +471,7 @@ const indexHTML = `<!doctype html>
 </section>
 
 <section id="settings" class="panel">
-<div class="card"><div class="section-title">AI Patrol Memory</div><div class="hint">Markdown journal directory: <strong>{{.AgentJournalDir}}</strong>. Agent context: <strong>GET /api/agent/context</strong>. Journal list/detail: <strong>GET /api/journals</strong>. Journal write: <strong>POST /api/journals</strong>. Autonomous investigation remains read-only by policy.</div></div>
+<div class="card"><div class="section-title">AI Patrol Memory</div><div class="hint">Agent/API entrypoint: <strong>GET /api/help</strong>. Markdown journal directory: <strong>{{.AgentJournalDir}}</strong>. Agent context: <strong>GET /api/agent/context</strong>. Journal list/detail: <strong>GET /api/journals</strong>. Journal write: <strong>POST /api/journals</strong>. Autonomous investigation remains read-only by policy.</div></div>
 <div class="card"><div class="section-title">Service Monitor</div><div class="hint">Targets are stored in <strong>{{if .ServiceConfig}}{{.ServiceConfig}}{{else}}outpost-services.json{{end}}</strong>. Default check interval: <strong>{{if .ServiceInterval}}{{.ServiceInterval}}{{else}}5m{{end}}</strong>. Each HTTP/HTTPS target checks DNS, TCP reachability, TLS (HTTPS), HTTP status, response latency, optional response content, and compares DNS/TLS/content/port exposure against the previous security baseline.</div></div>
 <div class="card"><div class="section-title">Add External Service</div><div class="form-grid"><div class="field"><label>Name</label><input id="svc-name" placeholder="FlowGate"></div><div class="field"><label>URL</label><input id="svc-url" placeholder="https://example.com/health"></div><div class="field"><label>Expected HTTP</label><input id="svc-status" type="number" value="200"></div><div class="field"><label>Max latency (ms)</label><input id="svc-latency" type="number" value="1000"></div></div><div class="field" style="margin-top:10px"><label>Body contains (optional)</label><input id="svc-body" placeholder="healthy"></div><div class="actions" style="margin-top:12px"><button class="btn" onclick="addService()">Add service</button></div></div>
 <div class="card"><div class="section-title">Configured Services</div>{{if .ServiceTargets}}<div class="target-list">{{range .ServiceTargets}}<div class="target-row"><div><strong>{{.Name}}</strong></div><div class="service-url">{{.URL}}</div><div class="actions"><button class="btn secondary" onclick="runOneService('{{.ID}}')">Check</button><button class="btn danger-btn" onclick="deleteService('{{.ID}}','{{.Name}}')">Delete</button></div></div>{{end}}</div>{{else}}<div class="empty">No external service targets configured.</div>{{end}}</div>
