@@ -198,3 +198,16 @@ func TestAPIHelpDocumentsAgentJournalContract(t *testing.T) {
 		t.Fatalf("journal example body should include markdown")
 	}
 }
+
+
+func TestUnknownAPIPathReturnsNotFound(t *testing.T) {
+	runner := NewRunner(RunnerConfig{Journal: filepath.Join(t.TempDir(), "journal.jsonl")})
+	server := NewWebServer("127.0.0.1:0", runner)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/helpp", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected unknown API path to return 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
