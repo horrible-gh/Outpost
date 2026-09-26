@@ -13,8 +13,11 @@ Outpost is a small, long-running infrastructure patrol tool focused on **host ob
 - Local Windows and Linux host collection
 - External HTTP/HTTPS service monitoring
 - JSONL host journal with baseline restoration after restart
+- Autonomous patrol context with adaptive attention signals and depth hints
+- AI/Codex-readable patrol memory through `GET /api/agent/context`
+- Free-form Markdown patrol journals with Web UI list/detail view
 - Persistent external service target configuration
-- Tabbed Web console: Overview / Host Patrol / Service Monitor / Settings
+- Tabbed Web console: Overview / Host Patrol / AI Journal / Service Monitor / Settings
 - CI with `go test ./...`
 
 ## Host Patrol
@@ -73,7 +76,7 @@ By default external services are checked every 5 minutes. A service becomes `WAR
 
 ## AI foundations
 
-AI providers are not connected yet, but the host patrol engine already has the pieces needed to add them without handing an AI unrestricted host access.
+Built-in AI providers are not connected yet. Instead, Outpost now exposes a constrained agent surface so Codex or another external AI can patrol from its own execution environment without turning the Outpost daemon itself into an unrestricted agent.
 
 ### Compact review packet
 
@@ -94,6 +97,41 @@ Supported policy logic:
 - `hybrid` (warning / risk threshold / periodic)
 
 This is intended to keep AI usage controllable when OpenAI / Claude providers are connected later.
+
+### Autonomous patrol context
+
+`GET /api/agent/context` returns a bounded working set for an AI patrol agent:
+
+- latest compact review packet
+- recent patrol digests
+- recent Markdown journal metadata/previews
+- carry-over checks from previous patrols and journals
+- repeated-finding and resource-trend signals
+- a `light / normal / focused / deep` depth hint
+- explicit read-only guardrails
+
+The depth hint is advisory. The agent is expected to decide what to inspect based on current evidence, long-running patterns, and unresolved journal items. Stable hosts can receive lighter patrols while warnings, repeated patterns, or journal carry-over can trigger deeper exception patrols.
+
+### Markdown patrol memory
+
+AI patrol results can be stored with:
+
+```text
+POST /api/journals
+```
+
+A journal can include a title, status, patrol sequence, tags, focus items, next checks, and arbitrary Markdown. Outpost stores each entry as a real `.md` file and lists it in the **AI Journal** tab. Plain Markdown files manually created in the journal directory are also discovered and shown, so an agent is not forced to use a proprietary document format.
+
+A typical phone-to-Codex workflow is:
+
+```text
+phone -> Codex
+      -> POST /api/patrols/run
+      -> GET /api/agent/context
+      -> choose additional read-only checks autonomously
+      -> POST /api/journals
+      -> AI Journal / future patrol memory
+```
 
 ## Safety policy
 
@@ -157,6 +195,7 @@ go run ./cmd/outpost \
   -interval 1h \
   -timeout 30s \
   -journal outpost-journal.jsonl \
+  -md-journal-dir outpost-journals \
   -service-interval 5m \
   -service-timeout 10s \
   -service-config outpost-services.json
@@ -168,7 +207,12 @@ go run ./cmd/outpost \
 GET    /api/status
 GET    /api/patrols?limit=20
 GET    /api/review-packet
+GET    /api/agent/context
 POST   /api/patrols/run
+
+GET    /api/journals?limit=50
+GET    /api/journals/{id}
+POST   /api/journals
 
 GET    /api/services
 POST   /api/services
@@ -184,8 +228,8 @@ DELETE /api/services/{id}
 - per-service custom intervals
 - persistent service-check history
 - ICMP / traceroute monitoring
-- OpenAI / Claude API calls
-- AI-generated dynamic read-only investigation
+- built-in OpenAI / Claude API calls
+- daemon-owned AI shell execution (external agents can use the constrained context/journal API)
 - suspicious-file scanning beyond process-location heuristics
 - alert integrations
 - remediation / automatic server changes
@@ -198,8 +242,9 @@ DELETE /api/services/{id}
 4. Introduce host target / transport abstraction for multiple remote servers.
 5. Add interval / daily-time / one-shot / retry patrol definitions.
 6. Add persistent service-monitor history and uptime calculations.
-7. Connect OpenAI / Claude behind the compact review packet and review policy.
-8. Add read-only follow-up investigation as a separate, constrained stage.
+7. Validate phone-to-Codex autonomous patrols against real servers and refine the context signals.
+8. Add remote host target / transport support to the autonomous patrol context.
+9. Optionally connect built-in OpenAI / Claude providers behind the same guardrails used by external agents.
 
 ## Status
 
