@@ -158,6 +158,8 @@ Current host patrol collection is read-only. External service monitoring only pe
 
 Any future mutating action must be explicitly separated from patrol collection and require a separate authorization path.
 
+Outpost currently has no built-in HTTP authentication/authorization layer. The default bind is loopback-only (`127.0.0.1:6877`). If you expose Outpost beyond loopback for phone or remote-agent access, use a trusted VPN/tunnel or an authenticated reverse proxy.
+
 ## Architecture
 
 ```text
