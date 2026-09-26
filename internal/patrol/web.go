@@ -79,7 +79,7 @@ func (s *WebServer) Run(ctx context.Context) error {
 
 func (s *WebServer) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /api/help", s.handleHelp)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/patrols", s.handlePatrols)
