@@ -19,7 +19,7 @@ func inspectSystemHealth(current Snapshot) (HealthSummary, Status, []string, []s
 	var entry systemHealthEntry
 	if json.Unmarshal([]byte(check.Raw), &entry) != nil { return HealthSummary{}, StatusNormal, nil, nil }
 
-	cpu := cpu
+	cpu := entry.CPUPercent
 	cpuSource := entry.CPUSource
 	if cpuSource == "" {
 		cpuSource = "system-health"
