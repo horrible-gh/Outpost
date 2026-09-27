@@ -19,7 +19,7 @@ func TestAutonomousContextReducesDepthAfterStableStreak(t *testing.T) {
 			},
 		})
 	}
-	ctx := BuildAutonomousPatrolContext(history, nil)
+	ctx := BuildAutonomousPatrolContext(history, nil, nil)
 	if ctx.DefaultDepthHint != "light" {
 		t.Fatalf("expected light depth, got %q", ctx.DefaultDepthHint)
 	}
@@ -64,7 +64,7 @@ func TestAutonomousContextSurfacesRepeatedPatternAndJournalCarryover(t *testing.
 		Focus: []string{"listener 8443"}, Next: []string{"Confirm owner process."},
 		Markdown: "# note\nfull body",
 	}}
-	ctx := BuildAutonomousPatrolContext(history, journals)
+	ctx := BuildAutonomousPatrolContext(history, journals, nil)
 	if ctx.DefaultDepthHint != "focused" {
 		t.Fatalf("expected focused depth, got %q", ctx.DefaultDepthHint)
 	}
@@ -92,4 +92,42 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+
+func TestAutonomousContextPrioritizesLatestUserDirective(t *testing.T) {
+	history := []PatrolReport{{
+		Snapshot: Snapshot{Sequence: 9, StartedAt: time.Now()},
+		Assessment: Assessment{Status: StatusNormal, Summary: "stable"},
+	}}
+	directives := []AgentJournalEntry{
+		{ID: "d2", Kind: "directive", Author: "user", Title: "Check Docker log growth", Preview: "Focus on Docker log growth and rotation."},
+		{ID: "d1", Kind: "directive", Author: "user", Title: "Older note", Preview: "Older objective."},
+	}
+	ctx := BuildAutonomousPatrolContext(history, nil, directives)
+	if ctx.PrimaryDirective == nil || ctx.PrimaryDirective.ID != "d2" {
+		t.Fatalf("expected newest directive as primary, got %#v", ctx.PrimaryDirective)
+	}
+	if len(ctx.UserDirectives) != 2 {
+		t.Fatalf("expected directive history, got %#v", ctx.UserDirectives)
+	}
+	joined := strings.Join(ctx.MissionRules, "\n")
+	for _, want := range []string{
+		"primary patrol objective",
+		"does not count as autonomous investigation",
+		"additional read-only check",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("mission rules should contain %q: %s", want, joined)
+		}
+	}
+	var userSignal bool
+	for _, signal := range ctx.Signals {
+		if signal.Kind == "user-directive" {
+			userSignal = true
+		}
+	}
+	if !userSignal {
+		t.Fatalf("expected user directive signal: %#v", ctx.Signals)
+	}
 }
