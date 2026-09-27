@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/horrible-gh/Outpost/internal/monitor"
 )
 
 func TestWebIndexRendersPatrolStatus(t *testing.T) {
@@ -185,6 +187,7 @@ func TestAPIHelpDocumentsEveryRegisteredAPIRoute(t *testing.T) {
 		"POST /api/services",
 		"POST /api/services/run",
 		"POST /api/services/{id}/run",
+		"PATCH /api/services/{id}",
 		"DELETE /api/services/{id}",
 	}
 	for _, route := range want {
@@ -289,4 +292,71 @@ func extractJSONID(t *testing.T, body []byte) string {
 		t.Fatalf("missing id in %s", string(body))
 	}
 	return payload.ID
+}
+
+
+func TestServiceMonitorPauseResumeAPIAndUI(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(RunnerConfig{Journal: filepath.Join(dir, "journal.jsonl")})
+	services := monitor.NewRunner(monitor.RunnerConfig{
+		ConfigPath: filepath.Join(dir, "services.json"),
+		Interval:   time.Minute,
+		Timeout:    time.Second,
+	})
+	target, err := services.AddTarget(monitor.Target{Name: "Example", URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("add service target: %v", err)
+	}
+	server := NewWebServer("127.0.0.1:0", runner, services)
+	handler := server.Handler()
+
+	pause := httptest.NewRequest(http.MethodPatch, "/api/services/"+target.ID, strings.NewReader(`{"enabled":false}`))
+	pause.Header.Set("Content-Type", "application/json")
+	pauseRec := httptest.NewRecorder()
+	handler.ServeHTTP(pauseRec, pause)
+	if pauseRec.Code != http.StatusOK {
+		t.Fatalf("expected pause 200, got %d: %s", pauseRec.Code, pauseRec.Body.String())
+	}
+	var paused monitor.Target
+	if err := json.Unmarshal(pauseRec.Body.Bytes(), &paused); err != nil {
+		t.Fatalf("decode paused target: %v", err)
+	}
+	if paused.Enabled {
+		t.Fatalf("expected target paused: %+v", paused)
+	}
+
+	index := httptest.NewRequest(http.MethodGet, "/", nil)
+	indexRec := httptest.NewRecorder()
+	handler.ServeHTTP(indexRec, index)
+	if indexRec.Code != http.StatusOK {
+		t.Fatalf("expected index 200, got %d: %s", indexRec.Code, indexRec.Body.String())
+	}
+	for _, want := range []string{"PAUSED", "Resume", "setServiceEnabled"} {
+		if !strings.Contains(indexRec.Body.String(), want) {
+			t.Fatalf("expected paused UI to contain %q", want)
+		}
+	}
+
+	resume := httptest.NewRequest(http.MethodPatch, "/api/services/"+target.ID, strings.NewReader(`{"enabled":true}`))
+	resume.Header.Set("Content-Type", "application/json")
+	resumeRec := httptest.NewRecorder()
+	handler.ServeHTTP(resumeRec, resume)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("expected resume 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	var resumed monitor.Target
+	if err := json.Unmarshal(resumeRec.Body.Bytes(), &resumed); err != nil {
+		t.Fatalf("decode resumed target: %v", err)
+	}
+	if !resumed.Enabled {
+		t.Fatalf("expected target resumed: %+v", resumed)
+	}
+
+	missing := httptest.NewRequest(http.MethodPatch, "/api/services/"+target.ID, strings.NewReader(`{}`))
+	missing.Header.Set("Content-Type", "application/json")
+	missingRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingRec, missing)
+	if missingRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing enabled 400, got %d: %s", missingRec.Code, missingRec.Body.String())
+	}
 }
