@@ -13,10 +13,10 @@ Outpost is a small, long-running infrastructure patrol tool focused on **host ob
 - Local Windows and Linux host collection
 - External HTTP/HTTPS service monitoring
 - JSONL host journal with baseline restoration after restart
-- Autonomous patrol context with adaptive attention signals and depth hints
+- Autonomous patrol context with adaptive attention signals, user patrol briefs, and depth hints
 - Self-describing agent/API entrypoint through `GET /api/help`
 - AI/Codex-readable patrol memory through `GET /api/agent/context`
-- Free-form Markdown patrol journals with Web UI list/detail view
+- Free-form Markdown patrol journals with rendered Web UI list/detail view
 - Persistent external service target configuration
 - Tabbed Web console: Overview / Host Patrol / AI Journal / Service Monitor / Settings
 - CI with `go test ./...`
@@ -25,7 +25,7 @@ Outpost is a small, long-running infrastructure patrol tool focused on **host ob
 
 ### Host health
 
-- CPU utilization
+- CPU utilization with Windows process-counter fallback when the total counter is stuck at 0
 - memory utilization
 - swap/pagefile utilization
 - disk utilization thresholds
@@ -115,13 +115,16 @@ This is intended to keep AI usage controllable when OpenAI / Claude providers ar
 
 - latest compact review packet
 - recent patrol digests
+- newest explicit user patrol brief as the primary objective
+- older user directives as historical context
 - recent Markdown journal metadata/previews
 - carry-over checks from previous patrols and journals
+- mission rules that require investigation beyond merely repeating Outpost baseline checks
 - repeated-finding and resource-trend signals
 - a `light / normal / focused / deep` depth hint
 - explicit read-only guardrails
 
-The depth hint is advisory. The agent is expected to decide what to inspect based on current evidence, long-running patterns, and unresolved journal items. Stable hosts can receive lighter patrols while warnings, repeated patterns, or journal carry-over can trigger deeper exception patrols.
+The depth hint is advisory. When a user patrol brief exists, it is the primary objective. Outpost's built-in checks are treated as baseline evidence rather than autonomous investigation itself: the agent should normally perform additional justified read-only checks, or explicitly explain why no additional check is useful. Stable hosts can receive lighter patrols while warnings, repeated patterns, user directives, or journal carry-over can trigger deeper exception patrols.
 
 ### Markdown patrol memory
 
@@ -131,17 +134,21 @@ AI patrol results can be stored with:
 POST /api/journals
 ```
 
-A journal can include a title, status, patrol sequence, tags, focus items, next checks, and arbitrary Markdown. Outpost stores each entry as a real `.md` file and lists it in the **AI Journal** tab. Plain Markdown files manually created in the journal directory are also discovered and shown, so an agent is not forced to use a proprietary document format.
+A journal can include a kind (`journal` or `directive`), author, title, status, patrol sequence, tags, focus items, next checks, and arbitrary Markdown. Outpost stores each entry as a real `.md` file and lists it in the **AI Journal** tab. The detail pane renders Markdown (headings, lists, tables, blockquotes, code fences, links, etc.) instead of showing raw source text. Plain Markdown files manually created in the journal directory are also discovered and shown.
 
 A typical phone-to-Codex workflow is:
 
 ```text
+user -> AI Journal: save a Patrol Brief (directive)
 phone -> Codex
+      -> GET /api/help
       -> POST /api/patrols/run
       -> GET /api/agent/context
-      -> choose additional read-only checks autonomously
-      -> POST /api/journals
-      -> AI Journal / future patrol memory
+      -> read primary_user_directive first
+      -> treat Outpost checks as baseline evidence
+      -> choose additional read-only checks beyond the baseline
+      -> POST /api/journals (kind=journal, author=agent)
+      -> rendered AI Journal / future patrol memory
 ```
 
 ## Safety policy
