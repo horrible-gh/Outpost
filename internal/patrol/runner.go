@@ -130,6 +130,10 @@ func (r *Runner) AgentJournals(limit int) ([]AgentJournalEntry, error) {
 	return r.agentJournal.List(limit)
 }
 
+func (r *Runner) AgentJournalsByKind(kind string, limit int) ([]AgentJournalEntry, error) {
+	return r.agentJournal.ListKind(kind, limit)
+}
+
 func (r *Runner) AgentJournal(id string) (AgentJournalEntry, error) {
 	return r.agentJournal.Get(id)
 }
@@ -162,9 +166,13 @@ func (r *Runner) AutonomousContext(patrolLimit, journalLimit int) (AutonomousPat
 	if err != nil {
 		return AutonomousPatrolContext{}, err
 	}
-	journals, err := r.AgentJournals(journalLimit)
+	journals, err := r.AgentJournalsByKind("journal", journalLimit)
 	if err != nil {
 		return AutonomousPatrolContext{}, err
 	}
-	return BuildAutonomousPatrolContext(history, journals), nil
+	directives, err := r.AgentJournalsByKind("directive", 5)
+	if err != nil {
+		return AutonomousPatrolContext{}, err
+	}
+	return BuildAutonomousPatrolContext(history, journals, directives), nil
 }
