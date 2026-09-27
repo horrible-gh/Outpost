@@ -47,26 +47,26 @@ func refineWindowsSystemHealth(ctx context.Context, snapshot *Snapshot) {
 func windowsSystemHealthScript() string {
 	return `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); ` +
 		`$os=Get-CimInstance Win32_OperatingSystem; ` +
-		`$cpu=$null; ` +
+		`$cpu=$null; $cpuSource='raw-perf-1s'; ` +
 		`try {` +
 		`  $p1=Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop; ` +
 		`  Start-Sleep -Milliseconds 1000; ` +
 		`  $p2=Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop; ` +
 		`  $n1=[double]$p1.PercentProcessorTime; $n2=[double]$p2.PercentProcessorTime; ` +
 		`  $d1=[double]$p1.Timestamp_Sys100NS; $d2=[double]$p2.Timestamp_Sys100NS; ` +
-		`  if($d2 -gt $d1){$cpu=[double](100*(1-(($n2-$n1)/($d2-$d1))))} ` +
+		`  if($d2 -gt $d1 -and ($n1 -ne 0 -or $n2 -ne 0)){$cpu=[double](100*(1-(($n2-$n1)/($d2-$d1))))} ` +
 		`} catch {} ` +
 		`if($null -eq $cpu -or [double]::IsNaN($cpu) -or [double]::IsInfinity($cpu) -or $cpu -lt 0 -or $cpu -gt 100){` +
-		`  try {$cpu=[double](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime} catch {$cpu=$null}` +
+		`  try {$cpu=[double](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime; $cpuSource='formatted-perf-fallback'} catch {$cpu=$null}` +
 		`} ` +
 		`if($null -eq $cpu -or [double]::IsNaN($cpu) -or [double]::IsInfinity($cpu) -or $cpu -lt 0 -or $cpu -gt 100){` +
-		`  try {$cpu=[double]((Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object LoadPercentage -Average).Average)} catch {$cpu=0.0}` +
+		`  try {$cpu=[double]((Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object LoadPercentage -Average).Average); $cpuSource='processor-load-fallback'} catch {$cpu=0.0; $cpuSource='unavailable'}` +
 		`} ` +
 		`$cpu=[math]::Min(100.0,[math]::Max(0.0,[double]$cpu)); ` +
 		`$mem=[double](100*(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)); ` +
 		`$pf=@(Get-CimInstance Win32_PageFileUsage); $swap=0.0; ` +
 		`if($pf.Count -gt 0){$allocated=($pf|Measure-Object AllocatedBaseSize -Sum).Sum; $used=($pf|Measure-Object CurrentUsage -Sum).Sum; if($allocated -gt 0){$swap=[double](100*$used/$allocated)}}; ` +
-		`[pscustomobject]@{CPUPercent=[math]::Round($cpu,1);MemoryPercent=[math]::Round($mem,1);SwapPercent=[math]::Round($swap,1)} | ConvertTo-Json -Compress`
+		`[pscustomobject]@{CPUPercent=[math]::Round($cpu,1);CPUSource=$cpuSource;MemoryPercent=[math]::Round($mem,1);SwapPercent=[math]::Round($swap,1)} | ConvertTo-Json -Compress`
 }
 
 func validSystemHealthRaw(raw string) bool {
