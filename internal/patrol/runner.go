@@ -139,7 +139,8 @@ func (r *Runner) AgentJournal(id string) (AgentJournalEntry, error) {
 }
 
 func (r *Runner) AppendAgentJournal(req AgentJournalWriteRequest) (AgentJournalEntry, error) {
-	if req.PatrolSequence <= 0 {
+	kind, _ := normalizeJournalKind(req.Kind)
+	if req.PatrolSequence <= 0 && kind != "directive" {
 		r.mu.RLock()
 		if r.latest != nil {
 			req.PatrolSequence = r.latest.Snapshot.Sequence
@@ -170,9 +171,17 @@ func (r *Runner) AutonomousContext(patrolLimit, journalLimit int) (AutonomousPat
 	if err != nil {
 		return AutonomousPatrolContext{}, err
 	}
-	directives, err := r.AgentJournalsByKind("directive", 5)
+	directiveSummaries, err := r.AgentJournalsByKind("directive", 5)
 	if err != nil {
 		return AutonomousPatrolContext{}, err
+	}
+	directives := make([]AgentJournalEntry, 0, len(directiveSummaries))
+	for _, summary := range directiveSummaries {
+		full, getErr := r.AgentJournal(summary.ID)
+		if getErr != nil {
+			return AutonomousPatrolContext{}, getErr
+		}
+		directives = append(directives, full)
 	}
 	return BuildAutonomousPatrolContext(history, journals, directives), nil
 }
