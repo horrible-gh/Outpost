@@ -14,6 +14,10 @@ func TestWindowsSystemHealthScriptUsesTwoRawSamples(t *testing.T) {
 		"100*(1-(($n2-$n1)/($d2-$d1)))",
 		"Win32_PerfFormattedData_PerfOS_Processor",
 		"Win32_Processor",
+		"CPUSource",
+		"raw-perf-1s",
+		"formatted-perf-fallback",
+		"processor-load-fallback",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected Windows CPU script to contain %q", want)
