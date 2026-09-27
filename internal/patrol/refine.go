@@ -29,21 +29,57 @@ func RefineSnapshot(ctx context.Context, snapshot *Snapshot) {
 }
 
 func refineWindowsSystemHealth(ctx context.Context, snapshot *Snapshot) {
-	const script = `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); ` +
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", windowsSystemHealthScript())
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return
+	}
+	raw := strings.TrimSpace(string(output))
+	if !validSystemHealthRaw(raw) {
+		return
+	}
+	replaceOrAppendCheck(snapshot, CheckResult{
+		Key: "system_health", Name: "System health", Status: StatusNormal,
+		Summary: "collected (1s CPU sample)", Raw: raw,
+	})
+}
+
+func windowsSystemHealthScript() string {
+	return `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); ` +
 		`$os=Get-CimInstance Win32_OperatingSystem; ` +
-		`$cpuObj=Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop; ` +
-		`$cpu=[double]$cpuObj.PercentProcessorTime; ` +
+		`$cpu=$null; ` +
+		`try {` +
+		`  $p1=Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop; ` +
+		`  Start-Sleep -Milliseconds 1000; ` +
+		`  $p2=Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop; ` +
+		`  $n1=[double]$p1.PercentProcessorTime; $n2=[double]$p2.PercentProcessorTime; ` +
+		`  $d1=[double]$p1.Timestamp_Sys100NS; $d2=[double]$p2.Timestamp_Sys100NS; ` +
+		`  if($d2 -gt $d1){$cpu=[double](100*(1-(($n2-$n1)/($d2-$d1))))} ` +
+		`} catch {} ` +
+		`if($null -eq $cpu -or [double]::IsNaN($cpu) -or [double]::IsInfinity($cpu) -or $cpu -lt 0 -or $cpu -gt 100){` +
+		`  try {$cpu=[double](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime} catch {$cpu=$null}` +
+		`} ` +
+		`if($null -eq $cpu -or [double]::IsNaN($cpu) -or [double]::IsInfinity($cpu) -or $cpu -lt 0 -or $cpu -gt 100){` +
+		`  try {$cpu=[double]((Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object LoadPercentage -Average).Average)} catch {$cpu=0.0}` +
+		`} ` +
+		`$cpu=[math]::Min(100.0,[math]::Max(0.0,[double]$cpu)); ` +
 		`$mem=[double](100*(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)); ` +
 		`$pf=@(Get-CimInstance Win32_PageFileUsage); $swap=0.0; ` +
 		`if($pf.Count -gt 0){$allocated=($pf|Measure-Object AllocatedBaseSize -Sum).Sum; $used=($pf|Measure-Object CurrentUsage -Sum).Sum; if($allocated -gt 0){$swap=[double](100*$used/$allocated)}}; ` +
 		`[pscustomobject]@{CPUPercent=[math]::Round($cpu,1);MemoryPercent=[math]::Round($mem,1);SwapPercent=[math]::Round($swap,1)} | ConvertTo-Json -Compress`
+}
 
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-	output, err := cmd.CombinedOutput()
-	if err != nil { return }
-	raw := strings.TrimSpace(string(output))
-	if raw == "" { return }
-	replaceOrAppendCheck(snapshot, CheckResult{Key: "system_health", Name: "System health", Status: StatusNormal, Summary: "collected", Raw: raw})
+func validSystemHealthRaw(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	var health systemHealthEntry
+	if json.Unmarshal([]byte(raw), &health) != nil {
+		return false
+	}
+	return health.CPUPercent >= 0 && health.CPUPercent <= 100 &&
+		health.MemoryPercent >= 0 && health.MemoryPercent <= 100 &&
+		health.SwapPercent >= 0 && health.SwapPercent <= 100
 }
 
 func refineWindowsProcessSignatures(ctx context.Context, snapshot *Snapshot) {
