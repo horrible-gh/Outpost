@@ -103,6 +103,7 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 			LocalStateMutations: []string{
 				"POST /api/journals writes a local Markdown patrol journal.",
 				"POST /api/services adds a local service-monitor target and persists its configuration.",
+				"PATCH /api/services/{id} pauses or resumes local monitoring for a target.",
 				"DELETE /api/services/{id} removes a local service-monitor target.",
 				"Service checks update local external-surface baselines and in-memory service history.",
 			},
@@ -345,6 +346,25 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 						Notes: []string{"A successful check may update the target's persisted external-surface baseline."},
 					},
 					{
+						Method: "PATCH", Path: "/api/services/{id}",
+						Summary: "Pause or resume scheduled monitoring for one configured service target without deleting it.",
+						TargetReadOnly: true, MutatesOutpost: true,
+						PathParameters: []APIHelpField{
+							{Name: "id", Type: "string", Required: true, Description: "Service target id."},
+						},
+						Body: []APIHelpField{
+							{Name: "enabled", Type: "boolean", Required: true, Description: "false pauses scheduled/all-target monitoring; true resumes it."},
+						},
+						Returns: "Updated service Target.",
+						StatusCodes: map[string]string{"200": "target state updated", "400": "invalid JSON or missing enabled", "404": "service target not found", "503": "service monitor not configured"},
+						Notes: []string{
+							"Pause preserves target configuration, security baseline, latest result, and history.",
+							"Paused targets are skipped by scheduled checks and POST /api/services/run.",
+							"POST /api/services/{id}/run remains available as an explicit manual check while paused.",
+						},
+						ExampleBody: map[string]any{"enabled": false},
+					},
+					{
 						Method: "DELETE", Path: "/api/services/{id}",
 						Summary: "Remove a local service-monitor target and its latest cached result.",
 						TargetReadOnly: true, MutatesOutpost: true,
@@ -372,7 +392,8 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 			"API responses are JSON except DELETE /api/services/{id}, which returns 204 with an empty body.",
 			"Times are encoded by Go's time.Time JSON marshaler (RFC3339/RFC3339Nano form).",
 			"Host patrol statuses: normal, warning, danger, unknown.",
-			"Service statuses: up, warning, down, unknown.",
+			"Service statuses: up, warning, down, unknown; target monitoring state is separately enabled or paused.",
+			"Pausing a service target stops scheduled/all-target checks but preserves configuration/baseline/history and still permits an explicit manual check.",
 			"Journal kinds: journal (patrol result) and directive (explicit user patrol brief).",
 			"Journal statuses: note, normal, warning, danger, unknown.",
 			"Invalid or non-positive bounded list/context query values fall back to their endpoint defaults; values above the documented maximum are clamped.",

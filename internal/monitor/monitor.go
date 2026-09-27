@@ -235,6 +235,22 @@ func (r *Runner) AddTarget(target Target) (Target, error) {
 	return target, nil
 }
 
+func (r *Runner) SetTargetEnabled(id string, enabled bool) (Target, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.targets {
+		if r.targets[i].ID != id {
+			continue
+		}
+		r.targets[i].Enabled = enabled
+		if err := r.saveLocked(); err != nil {
+			return Target{}, err
+		}
+		return r.targets[i], nil
+	}
+	return Target{}, fmt.Errorf("service target %q not found", id)
+}
+
 func (r *Runner) RemoveTarget(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

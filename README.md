@@ -11,7 +11,7 @@ Outpost is a small, long-running infrastructure patrol tool focused on **host ob
 - Immediate host patrol and external service checks on startup
 - Manual one-shot checks from the Web UI
 - Local Windows and Linux host collection
-- External HTTP/HTTPS service monitoring
+- External HTTP/HTTPS service monitoring with per-target pause/resume
 - JSONL host journal with baseline restoration after restart
 - Autonomous patrol context with adaptive attention signals, user patrol briefs, and depth hints
 - Self-describing agent/API entrypoint through `GET /api/help`
@@ -73,7 +73,7 @@ Service states are:
 - `DOWN`
 - `UNKNOWN`
 
-By default external services are checked every 5 minutes. A service becomes `WARNING` when its latency exceeds the configured threshold or its TLS certificate has fewer than 14 days remaining. Connection, DNS, TLS, HTTP-status, or content validation failures produce `DOWN`.
+By default external services are checked every 5 minutes. A target can be paused without deleting it; pause preserves its configuration, security baseline, latest result, and history while excluding it from scheduled/all-target checks. Explicit one-target checks remain available while paused. A service becomes `WARNING` when its latency exceeds the configured threshold or its TLS certificate has fewer than 14 days remaining. Connection, DNS, TLS, HTTP-status, or content validation failures produce `DOWN`.
 
 ## API discovery
 
@@ -241,6 +241,7 @@ GET    /api/services
 POST   /api/services
 POST   /api/services/run
 POST   /api/services/{id}/run
+PATCH  /api/services/{id}
 DELETE /api/services/{id}
 ```
 

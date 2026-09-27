@@ -87,3 +87,69 @@ func TestCompareSurfaceDetectsMeaningfulChanges(t *testing.T) {
 		}
 	}
 }
+
+
+func TestRunnerCanPauseAndResumeTarget(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "services.json")
+	runner := NewRunner(RunnerConfig{ConfigPath: configPath, Interval: time.Minute, Timeout: 3 * time.Second})
+	created, err := runner.AddTarget(Target{Name: "Example", URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("add target: %v", err)
+	}
+
+	paused, err := runner.SetTargetEnabled(created.ID, false)
+	if err != nil {
+		t.Fatalf("pause target: %v", err)
+	}
+	if paused.Enabled {
+		t.Fatalf("expected paused target to be disabled: %+v", paused)
+	}
+
+	reloaded := NewRunner(RunnerConfig{ConfigPath: configPath, Interval: time.Minute, Timeout: 3 * time.Second})
+	target, ok := reloaded.Target(created.ID)
+	if !ok || target.Enabled {
+		t.Fatalf("pause state did not persist: %+v, ok=%v", target, ok)
+	}
+
+	resumed, err := reloaded.SetTargetEnabled(created.ID, true)
+	if err != nil {
+		t.Fatalf("resume target: %v", err)
+	}
+	if !resumed.Enabled {
+		t.Fatalf("expected resumed target enabled: %+v", resumed)
+	}
+}
+
+func TestRunOnceSkipsPausedTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("healthy"))
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "services.json")
+	runner := NewRunner(RunnerConfig{ConfigPath: configPath, Interval: time.Minute, Timeout: 3 * time.Second})
+	created, err := runner.AddTarget(Target{Name: "Example", URL: server.URL})
+	if err != nil {
+		t.Fatalf("add target: %v", err)
+	}
+	if _, err := runner.SetTargetEnabled(created.ID, false); err != nil {
+		t.Fatalf("pause target: %v", err)
+	}
+
+	results, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run once: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("paused target should be skipped by scheduled/all-target checks: %+v", results)
+	}
+
+	manual, err := runner.RunTarget(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("manual check should still be allowed: %v", err)
+	}
+	if manual.Status != StatusUp {
+		t.Fatalf("unexpected manual result for paused target: %+v", manual)
+	}
+}
