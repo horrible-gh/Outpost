@@ -99,6 +99,9 @@ func TestWebAgentJournalAndContextAPI(t *testing.T) {
 	if directiveRec.Code != http.StatusCreated {
 		t.Fatalf("expected directive create 201, got %d: %s", directiveRec.Code, directiveRec.Body.String())
 	}
+	if strings.Contains(directiveRec.Body.String(), `"patrol_sequence":7`) {
+		t.Fatalf("future patrol brief must not attach to the previous patrol: %s", directiveRec.Body.String())
+	}
 
 	list := httptest.NewRequest(http.MethodGet, "/api/journals", nil)
 	listRec := httptest.NewRecorder()
@@ -113,7 +116,7 @@ func TestWebAgentJournalAndContextAPI(t *testing.T) {
 	if contextRec.Code != http.StatusOK {
 		t.Fatalf("expected context 200, got %d: %s", contextRec.Code, contextRec.Body.String())
 	}
-	for _, want := range []string{"autonomous-read-only", "Autonomous follow-up", "Inspect Docker logs", "primary_user_directive", "does not count as autonomous investigation", "Observe and investigate only"} {
+	for _, want := range []string{"autonomous-read-only", "Autonomous follow-up", "Inspect Docker logs", "Check Docker log growth, rotation, and follow anything suspicious.", "primary_user_directive", "does not count as autonomous investigation", "Observe and investigate only"} {
 		if !strings.Contains(contextRec.Body.String(), want) {
 			t.Fatalf("expected agent context to contain %q: %s", want, contextRec.Body.String())
 		}
