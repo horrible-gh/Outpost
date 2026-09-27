@@ -68,7 +68,7 @@ func BuildAutonomousPatrolContext(history []PatrolReport, journals []AgentJourna
 			"Finish by writing a Markdown patrol journal that records the user directive, chosen extra checks, rationale, findings, skipped checks, and next checks.",
 		},
 	}
-	ctx.UserDirectives = trimJournalBodies(directives)
+	ctx.UserDirectives = prepareDirectiveContext(directives)
 	if len(ctx.UserDirectives) > 0 {
 		primary := ctx.UserDirectives[0]
 		ctx.PrimaryDirective = &primary
@@ -241,6 +241,25 @@ func repeatedFindingSignals(history []PatrolReport) []AttentionSignal {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
+	return out
+}
+
+func prepareDirectiveContext(directives []AgentJournalEntry) []AgentJournalEntry {
+	out := make([]AgentJournalEntry, len(directives))
+	for i, directive := range directives {
+		if directive.Preview == "" {
+			directive.Preview = markdownPreview(directive.Markdown, 360)
+		}
+		// User instructions are deliberately included with substantially more
+		// context than ordinary journal previews so the patrol agent can execute
+		// the actual brief rather than infer it from a short summary.
+		runes := []rune(directive.Markdown)
+		if len(runes) > 4000 {
+			directive.Markdown = string(runes[:4000]) + "\n\n[brief truncated by Outpost]"
+		}
+		directive.HTML = ""
+		out[i] = directive
+	}
 	return out
 }
 
