@@ -82,8 +82,15 @@ func TestWebAgentJournalAndContextAPI(t *testing.T) {
 	detail := httptest.NewRequest(http.MethodGet, "/api/journals/"+extractJSONID(t, postRec.Body.Bytes()), nil)
 	detailRec := httptest.NewRecorder()
 	handler.ServeHTTP(detailRec, detail)
-	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), "<h1>Autonomous follow-up</h1>") {
+	if detailRec.Code != http.StatusOK {
 		t.Fatalf("expected rendered journal detail, got %d: %s", detailRec.Code, detailRec.Body.String())
+	}
+	var detailPayload AgentJournalEntry
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detailPayload); err != nil {
+		t.Fatalf("decode journal detail: %v", err)
+	}
+	if !strings.Contains(detailPayload.HTML, "<h1>Autonomous follow-up</h1>") || !strings.Contains(detailPayload.HTML, "<p>Read-only investigation completed.</p>") {
+		t.Fatalf("expected rendered journal HTML, got %q", detailPayload.HTML)
 	}
 
 	directive := httptest.NewRequest(http.MethodPost, "/api/journals", strings.NewReader(`{
