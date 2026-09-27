@@ -21,6 +21,8 @@ const (
 
 type AgentJournalWriteRequest struct {
 	PatrolSequence int64    `json:"patrol_sequence,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	Author         string   `json:"author,omitempty"`
 	Status         string   `json:"status,omitempty"`
 	Title          string   `json:"title"`
 	Summary        string   `json:"summary,omitempty"`
@@ -34,6 +36,8 @@ type AgentJournalEntry struct {
 	ID             string    `json:"id"`
 	CreatedAt      time.Time `json:"created_at"`
 	PatrolSequence int64     `json:"patrol_sequence,omitempty"`
+	Kind           string    `json:"kind"`
+	Author         string    `json:"author,omitempty"`
 	Status         string    `json:"status"`
 	Title          string    `json:"title"`
 	Summary        string    `json:"summary,omitempty"`
@@ -42,6 +46,7 @@ type AgentJournalEntry struct {
 	Next           []string  `json:"next,omitempty"`
 	Preview        string    `json:"preview,omitempty"`
 	Markdown       string    `json:"markdown,omitempty"`
+	HTML           string    `json:"html,omitempty"`
 	File           string    `json:"file"`
 }
 
@@ -49,6 +54,8 @@ type agentJournalMetadata struct {
 	ID             string    `json:"id"`
 	CreatedAt      time.Time `json:"created_at"`
 	PatrolSequence int64     `json:"patrol_sequence,omitempty"`
+	Kind           string    `json:"kind,omitempty"`
+	Author         string    `json:"author,omitempty"`
 	Status         string    `json:"status"`
 	Title          string    `json:"title"`
 	Summary        string    `json:"summary,omitempty"`
@@ -85,6 +92,18 @@ func (s *AgentJournalStore) Append(req AgentJournalWriteRequest) (AgentJournalEn
 		return AgentJournalEntry{}, fmt.Errorf("journal markdown exceeds %d bytes", maxAgentJournalBytes)
 	}
 
+	kind, err := normalizeJournalKind(req.Kind)
+	if err != nil {
+		return AgentJournalEntry{}, err
+	}
+	author := strings.TrimSpace(req.Author)
+	if author == "" {
+		if kind == "directive" {
+			author = "user"
+		} else {
+			author = "agent"
+		}
+	}
 	status, err := normalizeJournalStatus(req.Status)
 	if err != nil {
 		return AgentJournalEntry{}, err
@@ -95,6 +114,8 @@ func (s *AgentJournalStore) Append(req AgentJournalWriteRequest) (AgentJournalEn
 		ID:             id,
 		CreatedAt:      now,
 		PatrolSequence: req.PatrolSequence,
+		Kind:           kind,
+		Author:         author,
 		Status:         status,
 		Title:          req.Title,
 		Summary:        req.Summary,
@@ -159,6 +180,28 @@ func (s *AgentJournalStore) List(limit int) ([]AgentJournalEntry, error) {
 	return entries, nil
 }
 
+func (s *AgentJournalStore) ListKind(kind string, limit int) ([]AgentJournalEntry, error) {
+	kind, err := normalizeJournalKind(kind)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.List(0)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]AgentJournalEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != kind {
+			continue
+		}
+		filtered = append(filtered, entry)
+		if limit > 0 && len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered, nil
+}
+
 func (s *AgentJournalStore) Get(id string) (AgentJournalEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,6 +246,8 @@ func (s *AgentJournalStore) loadLocked(name string, includeMarkdown bool) (Agent
 		meta = agentJournalMetadata{
 			ID:        strings.TrimSuffix(name, filepath.Ext(name)),
 			CreatedAt: info.ModTime().UTC(),
+			Kind:      "journal",
+			Author:    "unknown",
 			Status:    "note",
 			Title:     firstMarkdownHeading(markdown),
 		}
@@ -231,10 +276,18 @@ func parseJournalHeader(text string) (agentJournalMetadata, string, bool) {
 }
 
 func entryFromMeta(meta agentJournalMetadata, file, markdown string, includeMarkdown bool) AgentJournalEntry {
+	if meta.Kind == "" {
+		meta.Kind = "journal"
+	}
+	if meta.Author == "" {
+		meta.Author = "unknown"
+	}
 	entry := AgentJournalEntry{
 		ID:             meta.ID,
 		CreatedAt:      meta.CreatedAt,
 		PatrolSequence: meta.PatrolSequence,
+		Kind:           meta.Kind,
+		Author:         meta.Author,
 		Status:         meta.Status,
 		Title:          meta.Title,
 		Summary:        meta.Summary,
@@ -246,8 +299,22 @@ func entryFromMeta(meta agentJournalMetadata, file, markdown string, includeMark
 	}
 	if includeMarkdown {
 		entry.Markdown = markdown
+		entry.HTML = renderMarkdown(markdown)
 	}
 	return entry
+}
+
+func normalizeJournalKind(value string) (string, error) {
+	kind := strings.ToLower(strings.TrimSpace(value))
+	if kind == "" {
+		return "journal", nil
+	}
+	switch kind {
+	case "journal", "directive":
+		return kind, nil
+	default:
+		return "", fmt.Errorf("unsupported journal kind %q", value)
+	}
 }
 
 func normalizeJournalStatus(value string) (string, error) {

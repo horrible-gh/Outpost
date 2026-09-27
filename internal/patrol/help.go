@@ -132,10 +132,11 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 			},
 			{
 				Step: 3, Action: "GET /api/agent/context",
-				Why: "Receive recent patrol trends, repeated findings, prior journal carry-over, and an advisory patrol-depth hint.",
+				Why: "Receive the newest user patrol brief, recent patrol trends, repeated findings, prior journal carry-over, mission rules, and an advisory patrol-depth hint.",
 				Details: []string{
+					"If primary_user_directive exists, treat it as the primary objective.",
+					"Outpost built-in checks are baseline evidence; repeating or paraphrasing them does not count as autonomous investigation.",
 					"The depth hint is advisory; choose the actual read-only investigation yourself.",
-					"Prefer current evidence and unresolved journal items over routine repetition.",
 				},
 			},
 			{
@@ -144,7 +145,7 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 			},
 			{
 				Step: 5, Action: "Perform additional read-only investigation",
-				Why: "Follow anomalies, trends, or exceptions beyond the fixed patrol checklist without modifying the target.",
+				Why: "Satisfy the user brief first, then follow anomalies, trends, or exceptions beyond the fixed patrol checklist without modifying the target.",
 			},
 			{
 				Step: 6, Action: "POST /api/journals",
@@ -220,9 +221,10 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 						Returns: "Object with patrol autonomous context and, when configured, service targets/latest service results.",
 						StatusCodes: map[string]string{"200": "context returned", "500": "patrol or journal history read failed"},
 						Notes: []string{
-							"Includes light/normal/focused/deep depth hint, recent patrol digests, signals, pending checks, guardrails, and workflow guidance.",
+							"Includes primary_user_directive, recent user_directives, mission_rules, light/normal/focused/deep depth hint, recent patrol digests, signals, pending checks, guardrails, and workflow guidance.",
+							"The newest directive-kind journal is the primary patrol objective; older directives are historical context.",
 							"Full historical Markdown bodies are intentionally omitted; fetch a specific journal when needed.",
-							"AI chooses the actual read-only patrol scope. Outpost signals are hints, not mandatory commands.",
+							"AI chooses the actual read-only patrol scope, but should go beyond merely repeating Outpost baseline checks.",
 						},
 					},
 				},
@@ -243,12 +245,12 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 					},
 					{
 						Method: "GET", Path: "/api/journals/{id}",
-						Summary: "Return one Markdown patrol journal including its full Markdown body.",
+						Summary: "Return one Markdown patrol journal or user directive including full Markdown and safely rendered HTML.",
 						TargetReadOnly: true, MutatesOutpost: false,
 						PathParameters: []APIHelpField{
 							{Name: "id", Type: "string", Required: true, Description: "Journal id returned by GET /api/journals."},
 						},
-						Returns: "AgentJournalEntry including markdown.",
+						Returns: "AgentJournalEntry including markdown and safe rendered html.",
 						StatusCodes: map[string]string{"200": "journal returned", "404": "journal not found", "500": "journal read failed"},
 					},
 					{
@@ -256,8 +258,10 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 						Summary: "Create a local free-form Markdown patrol journal for AI/human patrol memory.",
 						TargetReadOnly: true, MutatesOutpost: true,
 						Body: []APIHelpField{
-							{Name: "title", Type: "string", Required: true, Description: "Journal title."},
+							{Name: "title", Type: "string", Required: true, Description: "Journal/directive title."},
 							{Name: "markdown", Type: "string", Required: true, Maximum: fmt.Sprintf("%d bytes", maxAgentJournalBytes), Description: "Free-form Markdown body."},
+							{Name: "kind", Type: "string", Default: "journal", Description: "journal for AI/human patrol results; directive for an explicit user patrol brief."},
+							{Name: "author", Type: "string", Description: "Optional author label. Defaults to agent for journal and user for directive."},
 							{Name: "status", Type: "string", Default: "note", Description: "One of note, normal, warning, danger, unknown."},
 							{Name: "patrol_sequence", Type: "integer", Description: "Related patrol sequence; zero/omitted is automatically linked to the latest completed patrol when available."},
 							{Name: "summary", Type: "string", Description: "Short list/UI summary."},
@@ -265,9 +269,11 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 							{Name: "focus", Type: "string[]", Description: "Items deliberately investigated in this patrol."},
 							{Name: "next", Type: "string[]", Description: "Carry-over checks that future autonomous patrol context should surface."},
 						},
-						Returns: "Created AgentJournalEntry including generated id, file name, timestamp, metadata, preview, and Markdown.",
+						Returns: "Created AgentJournalEntry including generated id, kind/author, file name, timestamp, metadata, preview, Markdown, and safe rendered HTML.",
 						StatusCodes: map[string]string{"201": "journal created", "400": "invalid JSON, missing required field, unsupported status, or body too large"},
 						ExampleBody: map[string]any{
+							"kind": "journal",
+							"author": "agent",
 							"title": "Docker storage follow-up",
 							"status": "warning",
 							"summary": "Container log growth remains above the recent baseline.",
@@ -367,6 +373,7 @@ func (s *WebServer) buildAPIHelp() APIHelp {
 			"Times are encoded by Go's time.Time JSON marshaler (RFC3339/RFC3339Nano form).",
 			"Host patrol statuses: normal, warning, danger, unknown.",
 			"Service statuses: up, warning, down, unknown.",
+			"Journal kinds: journal (patrol result) and directive (explicit user patrol brief).",
 			"Journal statuses: note, normal, warning, danger, unknown.",
 			"Invalid or non-positive bounded list/context query values fall back to their endpoint defaults; values above the documented maximum are clamped.",
 			"The Web UI is served at GET / and is not required for API/agent use.",

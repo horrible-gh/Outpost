@@ -26,20 +26,23 @@ type AttentionSignal struct {
 }
 
 type AutonomousPatrolContext struct {
-	GeneratedAt        time.Time           `json:"generated_at"`
-	Mode               string              `json:"mode"`
-	DefaultDepthHint   string              `json:"default_depth_hint"`
-	StablePatrolStreak int                 `json:"stable_patrol_streak"`
-	LatestReview       *ReviewPacket       `json:"latest_review,omitempty"`
-	RecentPatrols      []PatrolDigest      `json:"recent_patrols"`
-	RecentJournals     []AgentJournalEntry `json:"recent_journals"`
-	Signals            []AttentionSignal   `json:"signals"`
-	PendingChecks      []string            `json:"pending_checks"`
-	Guardrails         []string            `json:"guardrails"`
-	Workflow           []string            `json:"workflow"`
+	GeneratedAt        time.Time            `json:"generated_at"`
+	Mode               string               `json:"mode"`
+	DefaultDepthHint   string               `json:"default_depth_hint"`
+	StablePatrolStreak int                  `json:"stable_patrol_streak"`
+	LatestReview       *ReviewPacket        `json:"latest_review,omitempty"`
+	RecentPatrols      []PatrolDigest       `json:"recent_patrols"`
+	RecentJournals     []AgentJournalEntry  `json:"recent_journals"`
+	UserDirectives     []AgentJournalEntry  `json:"user_directives"`
+	PrimaryDirective   *AgentJournalEntry   `json:"primary_user_directive,omitempty"`
+	MissionRules       []string             `json:"mission_rules"`
+	Signals            []AttentionSignal    `json:"signals"`
+	PendingChecks      []string             `json:"pending_checks"`
+	Guardrails         []string             `json:"guardrails"`
+	Workflow           []string             `json:"workflow"`
 }
 
-func BuildAutonomousPatrolContext(history []PatrolReport, journals []AgentJournalEntry) AutonomousPatrolContext {
+func BuildAutonomousPatrolContext(history []PatrolReport, journals []AgentJournalEntry, directives []AgentJournalEntry) AutonomousPatrolContext {
 	ctx := AutonomousPatrolContext{
 		GeneratedAt:      time.Now().UTC(),
 		Mode:             "autonomous-read-only",
@@ -47,15 +50,33 @@ func BuildAutonomousPatrolContext(history []PatrolReport, journals []AgentJourna
 		Guardrails: []string{
 			"Observe and investigate only; do not mutate the target host.",
 			"Do not restart services, install packages, modify files, change accounts, or change firewall rules.",
-			"Treat the depth hint as advisory. Follow stronger current evidence or unresolved journal items.",
+			"Treat the depth hint as advisory. Follow stronger current evidence, explicit user directives, or unresolved journal items.",
 			"Record why extra checks were chosen and why optional checks were skipped.",
 		},
-		Workflow: []string{
-			"Run or inspect the current patrol and review the recent patrol history.",
-			"Use signals, patterns, and prior Markdown journals to choose the patrol focus yourself.",
-			"Perform additional read-only investigation when evidence justifies it.",
-			"Finish by writing a Markdown patrol journal with findings, rationale, and next checks.",
+		MissionRules: []string{
+			"If primary_user_directive exists, treat it as the primary patrol objective unless it conflicts with a safety guardrail.",
+			"Outpost built-in patrol checks are baseline evidence. Merely repeating, paraphrasing, or re-running the same checks does not count as autonomous investigation.",
+			"When useful and safe, perform at least one additional read-only check that is not already represented by the baseline patrol evidence.",
+			"If no additional check is useful, explicitly explain why rather than pretending the baseline patrol itself was autonomous investigation.",
+			"After satisfying the user directive, follow evidence-driven anomalies and recurring patterns as secondary objectives.",
 		},
+		Workflow: []string{
+			"Read the newest user patrol directive first. Use older directives only as historical context when they do not conflict with the newest one.",
+			"Run or inspect the current Outpost patrol only to establish baseline evidence and recent changes.",
+			"Choose additional read-only checks that go beyond the baseline checklist and are justified by the directive, signals, patterns, or journal carry-over.",
+			"Follow meaningful anomalies recursively within the read-only boundary.",
+			"Finish by writing a Markdown patrol journal that records the user directive, chosen extra checks, rationale, findings, skipped checks, and next checks.",
+		},
+	}
+	ctx.UserDirectives = prepareDirectiveContext(directives)
+	if len(ctx.UserDirectives) > 0 {
+		primary := ctx.UserDirectives[0]
+		ctx.PrimaryDirective = &primary
+		ctx.Signals = append(ctx.Signals, AttentionSignal{
+			Kind: "user-directive", Level: "info",
+			Message: fmt.Sprintf("Primary patrol objective from user: %s", primary.Title),
+			Evidence: []string{primary.Preview},
+		})
 	}
 	if len(history) == 0 {
 		ctx.Signals = append(ctx.Signals, AttentionSignal{
@@ -220,6 +241,25 @@ func repeatedFindingSignals(history []PatrolReport) []AttentionSignal {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
+	return out
+}
+
+func prepareDirectiveContext(directives []AgentJournalEntry) []AgentJournalEntry {
+	out := make([]AgentJournalEntry, len(directives))
+	for i, directive := range directives {
+		if directive.Preview == "" {
+			directive.Preview = markdownPreview(directive.Markdown, 360)
+		}
+		// User instructions are deliberately included with substantially more
+		// context than ordinary journal previews so the patrol agent can execute
+		// the actual brief rather than infer it from a short summary.
+		runes := []rune(directive.Markdown)
+		if len(runes) > 4000 {
+			directive.Markdown = string(runes[:4000]) + "\n\n[brief truncated by Outpost]"
+		}
+		directive.HTML = ""
+		out[i] = directive
+	}
 	return out
 }
 

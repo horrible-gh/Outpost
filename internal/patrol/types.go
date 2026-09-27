@@ -43,6 +43,7 @@ type WatchSummary struct {
 
 type HealthSummary struct {
 	CPUPercent    float64 `json:"cpu_percent"`
+	CPUSource     string  `json:"cpu_source,omitempty"`
 	MemoryPercent float64 `json:"memory_percent"`
 	SwapPercent   float64 `json:"swap_percent"`
 }

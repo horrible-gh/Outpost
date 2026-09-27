@@ -26,8 +26,11 @@ func TestAgentJournalStoreRoundTrip(t *testing.T) {
 	if entry.ID == "" || entry.File == "" {
 		t.Fatalf("expected id and file, got %#v", entry)
 	}
-	if entry.PatrolSequence != 12 || entry.Status != "warning" {
+	if entry.PatrolSequence != 12 || entry.Status != "warning" || entry.Kind != "journal" || entry.Author != "agent" {
 		t.Fatalf("unexpected entry metadata: %#v", entry)
+	}
+	if !strings.Contains(entry.HTML, "<h1>Patrol note</h1>") {
+		t.Fatalf("expected rendered HTML, got %q", entry.HTML)
 	}
 	if len(entry.Tags) != 2 {
 		t.Fatalf("expected duplicate tags removed, got %#v", entry.Tags)
@@ -72,5 +75,58 @@ func TestAgentJournalStoreListsStandaloneMarkdown(t *testing.T) {
 	}
 	if list[0].ID != "manual-note" || list[0].Title != "Manual patrol" || list[0].Status != "note" {
 		t.Fatalf("unexpected standalone markdown metadata: %#v", list[0])
+	}
+}
+
+
+func TestAgentJournalDirectiveIsSeparatedFromAgentJournal(t *testing.T) {
+	store := NewAgentJournalStore(t.TempDir())
+	directive, err := store.Append(AgentJournalWriteRequest{
+		Kind: "directive",
+		Title: "Inspect Docker logs",
+		Markdown: "Check **log rotation** and anything suspicious around it.",
+	})
+	if err != nil {
+		t.Fatalf("append directive: %v", err)
+	}
+	if directive.Kind != "directive" || directive.Author != "user" {
+		t.Fatalf("unexpected directive defaults: %#v", directive)
+	}
+	if !strings.Contains(directive.HTML, "<strong>log rotation</strong>") {
+		t.Fatalf("expected rendered directive markdown, got %q", directive.HTML)
+	}
+
+	if _, err := store.Append(AgentJournalWriteRequest{
+		Title: "Agent result",
+		Markdown: "Nothing unusual.",
+	}); err != nil {
+		t.Fatalf("append journal: %v", err)
+	}
+
+	directives, err := store.ListKind("directive", 10)
+	if err != nil {
+		t.Fatalf("list directives: %v", err)
+	}
+	if len(directives) != 1 || directives[0].ID != directive.ID {
+		t.Fatalf("unexpected directives: %#v", directives)
+	}
+	journals, err := store.ListKind("journal", 10)
+	if err != nil {
+		t.Fatalf("list journals: %v", err)
+	}
+	if len(journals) != 1 || journals[0].Kind != "journal" {
+		t.Fatalf("unexpected journals: %#v", journals)
+	}
+}
+
+func TestAgentJournalRejectsUnsupportedKind(t *testing.T) {
+	store := NewAgentJournalStore(t.TempDir())
+	_, err := store.Append(AgentJournalWriteRequest{
+		Kind: "mission-control",
+		Title: "bad",
+		Markdown: "bad",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported journal kind") {
+		t.Fatalf("expected unsupported kind error, got %v", err)
 	}
 }
