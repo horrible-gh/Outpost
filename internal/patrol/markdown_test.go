@@ -6,23 +6,12 @@ import (
 )
 
 func TestRenderMarkdownRendersCommonJournalSyntax(t *testing.T) {
-	raw := `# Patrol 17
-
-**Summary:** healthy
-
-- checked logs
-- checked ports
-
-| Item | Result |
-| --- | --- |
-| CPU | 4.2% |
-
-> follow up tomorrow
-
-```text
-hello <world>
-```
-`
+	raw := "# Patrol 17\n\n" +
+		"**Summary:** healthy\n\n" +
+		"- checked logs\n- checked ports\n\n" +
+		"| Item | Result |\n| --- | --- |\n| CPU | 4.2% |\n\n" +
+		"> follow up tomorrow\n\n" +
+		"```text\nhello <world>\n```\n"
 	html := renderMarkdown(raw)
 	for _, want := range []string{
 		"<h1>Patrol 17</h1>",
