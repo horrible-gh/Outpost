@@ -67,7 +67,7 @@ func TestWebAgentJournalAndContextAPI(t *testing.T) {
 		"title":"Autonomous follow-up",
 		"status":"note",
 		"summary":"Checked a suspicious trend.",
-		"markdown":"# Autonomous follow-up\\n\\nRead-only investigation completed."
+		"markdown":"# Autonomous follow-up\n\nRead-only investigation completed."
 	}`))
 	post.Header.Set("Content-Type", "application/json")
 	postRec := httptest.NewRecorder()
